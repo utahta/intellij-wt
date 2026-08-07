@@ -23,7 +23,7 @@ To raise already-open project windows, grant the Accessibility permission
 ## Usage
 
 ```
-wt add <branch> [base]   Create a worktree under <repo>-wt/<branch> and open it in IDEA.
+wt add <branch> [base]   Create a worktree and open it in IDEA.
                          Existing branches are checked out as is; new branches are
                          created off [base] (default: origin's default branch).
                          .envrc files in the worktree are direnv-allowed automatically.
@@ -35,8 +35,16 @@ wt prune                 Select worktrees to remove (Tab to multi-select).
 wt path                  Select a worktree and print its path (for cd wrappers).
 ```
 
-Worktrees are placed next to the repository: `/path/to/repo` →
-`/path/to/repo-wt/<branch>` (slashes in branch names become dashes).
+Worktrees are placed under a shared root, organized by the origin remote's
+owner: `~/.intellij-wt/worktrees/<org>/<repo>/<repo>--<branch>` (slashes in
+branch names become dashes; repos without an origin go under `_local`).
+Set `WT_ROOT` to use a different root directory. The leaf directory name
+doubles as the IDEA project name, so project windows are identifiable by
+repo and branch.
+
+Worktrees created by older versions (the sibling `<repo>-wt/` layout) keep
+working — `list`, `open`, and `prune` operate on whatever `git worktree`
+reports, regardless of location.
 
 ### cd into a worktree
 

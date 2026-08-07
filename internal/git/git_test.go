@@ -34,3 +34,26 @@ func TestParseWorktreesEmpty(t *testing.T) {
 		t.Errorf("parseWorktrees(\"\") = %+v, want empty", got)
 	}
 }
+
+func TestOwnerFromURL(t *testing.T) {
+	tests := []struct {
+		url  string
+		want string
+	}{
+		{"git@github.com:utahta/intellij-wt.git", "utahta"},
+		{"https://github.com/utahta/intellij-wt.git", "utahta"},
+		{"https://github.com/utahta/intellij-wt", "utahta"},
+		{"ssh://git@github.com/utahta/intellij-wt.git", "utahta"},
+		{"git@gitlab.com:group/subgroup/repo.git", "subgroup"},
+		{"https://github.com/repo.git", ""},
+		{"git@github.com:repo.git", ""},
+		{"/path/to/origin", ""},
+		{"file:///path/to/origin", ""},
+		{"../origin", ""},
+	}
+	for _, tt := range tests {
+		if got := ownerFromURL(tt.url); got != tt.want {
+			t.Errorf("ownerFromURL(%q) = %q, want %q", tt.url, got, tt.want)
+		}
+	}
+}

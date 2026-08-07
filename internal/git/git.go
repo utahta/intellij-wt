@@ -86,6 +86,37 @@ func parseWorktrees(out string) []Worktree {
 	return wts
 }
 
+// OriginOwner returns the owner (organization or user) of the origin remote,
+// or "" when origin is missing or its URL has no owner segment.
+func OriginOwner(dir string) string {
+	url, err := run(dir, "remote", "get-url", "origin")
+	if err != nil {
+		return ""
+	}
+	return ownerFromURL(url)
+}
+
+// ownerFromURL extracts the owner from a git remote URL: the second-to-last
+// path segment of scp-like (git@host:owner/repo.git) and URL
+// (scheme://host/owner/repo) forms. Filesystem-path remotes yield "".
+func ownerFromURL(url string) string {
+	url = strings.TrimSuffix(strings.TrimSuffix(url, "/"), ".git")
+	if strings.HasPrefix(url, "file://") || strings.HasPrefix(url, "/") ||
+		strings.HasPrefix(url, "./") || strings.HasPrefix(url, "../") {
+		return ""
+	}
+	if i := strings.Index(url, "://"); i >= 0 {
+		url = url[i+3:]
+	} else if i := strings.Index(url, ":"); i >= 0 {
+		url = url[:i] + "/" + url[i+1:]
+	}
+	seg := strings.Split(url, "/")
+	if len(seg) < 3 { // need at least host/owner/repo
+		return ""
+	}
+	return seg[len(seg)-2]
+}
+
 // DefaultBranch returns the short name of origin's default branch
 // (e.g. "develop"), or "" when origin/HEAD is not set.
 func DefaultBranch(dir string) string {

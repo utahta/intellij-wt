@@ -17,7 +17,11 @@ var addNoOpen bool
 var addCmd = &cobra.Command{
 	Use:   "add <branch> [base]",
 	Short: "Create a worktree for the branch and open it in IDEA",
-	Long: `Create a worktree under <repo>-wt/<branch> and open it in IntelliJ IDEA.
+	Long: `Create a worktree and open it in IntelliJ IDEA.
+
+Worktrees live under a shared root (default ~/.intellij-wt/worktrees,
+overridable with WT_ROOT), organized as <org>/<repo>/<repo>--<branch>.
+The org comes from the origin remote URL ("_local" when there is none).
 
 An existing branch is checked out as is. A new branch is created off [base]
 (default: origin's default branch, falling back to HEAD). Any .envrc found
@@ -40,7 +44,10 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	path := worktreePath(root, branch)
+	path, err := worktreePath(root, branch)
+	if err != nil {
+		return err
+	}
 	if git.BranchExists(root, branch) {
 		err = git.AddWorktree(root, path, branch)
 	} else {

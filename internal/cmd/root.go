@@ -26,11 +26,26 @@ func Execute() error {
 	return rootCmd.Execute()
 }
 
-// worktreePath places worktrees under a sibling "<repo>-wt" directory:
-// /path/to/repo -> /path/to/repo-wt/<branch> ("/" in branch becomes "-").
-func worktreePath(root, branch string) string {
+// worktreePath places worktrees under a shared root (default
+// ~/.intellij-wt/worktrees, overridable with WT_ROOT):
+// <wt-root>/<org>/<repo>/<repo>--<branch> ("/" in branch becomes "-").
+// org comes from the origin remote URL, falling back to "_local". The leaf
+// directory doubles as the IDEA project name, hence the repo prefix.
+func worktreePath(root, branch string) (string, error) {
+	base := os.Getenv("WT_ROOT")
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("cannot resolve worktree root: %w (set WT_ROOT)", err)
+		}
+		base = filepath.Join(home, ".intellij-wt", "worktrees")
+	}
+	org := git.OriginOwner(root)
+	if org == "" {
+		org = "_local"
+	}
 	name := filepath.Base(root)
-	return filepath.Join(filepath.Dir(root), name+"-wt", strings.ReplaceAll(branch, "/", "-"))
+	return filepath.Join(base, org, name, name+"--"+strings.ReplaceAll(branch, "/", "-")), nil
 }
 
 func selectWorktree(wts []git.Worktree, header string) (git.Worktree, error) {
