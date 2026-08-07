@@ -15,9 +15,9 @@ var pathCmd = &cobra.Command{
 
 Pair it with a shell function to cd into a worktree:
 
-  function wtcd() {
+  function iwtcd() {
     local p
-    p=$(wt path) && cd "$p"
+    p=$(iwt path) && cd "$p"
   }`,
 	Args: cobra.NoArgs,
 	RunE: runPath,

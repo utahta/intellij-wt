@@ -20,7 +20,7 @@ var addCmd = &cobra.Command{
 	Long: `Create a worktree and open it in IntelliJ IDEA.
 
 Worktrees live under a shared root (default ~/.intellij-wt/worktrees,
-overridable with WT_ROOT), organized as <org>/<repo>/<repo>--<branch>.
+overridable with IWT_ROOT), organized as <org>/<repo>/<repo>--<branch>.
 The org comes from the origin remote URL ("_local" when there is none).
 
 An existing branch is checked out as is. A new branch is created off [base]
@@ -70,7 +70,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 
 	if !addNoOpen {
 		if err := idea.Open(path); err != nil {
-			fmt.Fprintln(os.Stderr, "wt: failed to open IDEA:", err)
+			fmt.Fprintln(os.Stderr, "iwt: failed to open IDEA:", err)
 		}
 	}
 	fmt.Println(path)

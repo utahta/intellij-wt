@@ -92,7 +92,7 @@ func runPrune(cmd *cobra.Command, args []string) error {
 			force = true
 		}
 		if err := git.RemoveWorktree(root, w.Path, force); err != nil {
-			fmt.Fprintf(os.Stderr, "wt: %v\n", err)
+			fmt.Fprintf(os.Stderr, "iwt: %v\n", err)
 			continue
 		}
 		fmt.Fprintf(os.Stderr, "removed: %s\n", w.Path)
@@ -100,7 +100,7 @@ func runPrune(cmd *cobra.Command, args []string) error {
 		if w.Branch != "" && defaultBranch != "" && git.IsMerged(root, w.Branch, defaultBranch) {
 			if pruneMerged || confirm(fmt.Sprintf("branch %q is merged into %s. Delete it?", w.Branch, defaultBranch)) {
 				if err := git.DeleteBranch(root, w.Branch); err != nil {
-					fmt.Fprintf(os.Stderr, "wt: %v\n", err)
+					fmt.Fprintf(os.Stderr, "iwt: %v\n", err)
 				} else {
 					fmt.Fprintf(os.Stderr, "deleted branch: %s\n", w.Branch)
 				}

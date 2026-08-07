@@ -1,4 +1,4 @@
-// Package cmd implements the wt subcommands.
+// Package cmd implements the iwt subcommands.
 package cmd
 
 import (
@@ -15,7 +15,7 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:           "wt",
+	Use:           "iwt",
 	Short:         "Manage git worktrees and open them in IntelliJ IDEA",
 	Version:       "0.1.0",
 	SilenceUsage:  true,
@@ -27,16 +27,16 @@ func Execute() error {
 }
 
 // worktreePath places worktrees under a shared root (default
-// ~/.intellij-wt/worktrees, overridable with WT_ROOT):
-// <wt-root>/<org>/<repo>/<repo>--<branch> ("/" in branch becomes "-").
+// ~/.intellij-wt/worktrees, overridable with IWT_ROOT):
+// <iwt-root>/<org>/<repo>/<repo>--<branch> ("/" in branch becomes "-").
 // org comes from the origin remote URL, falling back to "_local". The leaf
 // directory doubles as the IDEA project name, hence the repo prefix.
 func worktreePath(root, branch string) (string, error) {
-	base := os.Getenv("WT_ROOT")
+	base := os.Getenv("IWT_ROOT")
 	if base == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return "", fmt.Errorf("cannot resolve worktree root: %w (set WT_ROOT)", err)
+			return "", fmt.Errorf("cannot resolve worktree root: %w (set IWT_ROOT)", err)
 		}
 		base = filepath.Join(home, ".intellij-wt", "worktrees")
 	}

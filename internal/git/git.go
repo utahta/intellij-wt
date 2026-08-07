@@ -35,7 +35,7 @@ func run(dir string, args ...string) (string, error) {
 }
 
 // runLoud is for mutating commands whose progress output is useful to the
-// user. stdout goes to stderr so that wt's own stdout stays script-friendly.
+// user. stdout goes to stderr so that iwt's own stdout stays script-friendly.
 func runLoud(dir string, args ...string) error {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
