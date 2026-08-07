@@ -30,6 +30,8 @@ wt add <branch> [base]   Create a worktree under <repo>-wt/<branch> and open it 
 wt open                  Select a worktree and open/raise it in IDEA.
 wt list                  List worktrees with dirty state and last commit time.
 wt prune                 Select worktrees to remove (Tab to multi-select).
+                         --merged removes all worktrees whose branch is merged
+                         into origin's default branch, without prompting.
 wt path                  Select a worktree and print its path (for cd wrappers).
 ```
 
