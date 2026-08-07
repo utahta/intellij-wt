@@ -7,7 +7,7 @@ Manage git worktrees and open them in IntelliJ IDEA, from the command line.
   window is already open, it is raised to the front instead
 - `iwt prune` fuzzy-selects worktrees to remove, offering to delete merged branches
 
-macOS only (window focusing relies on System Events).
+macOS only.
 
 ## Install
 
@@ -15,10 +15,16 @@ macOS only (window focusing relies on System Events).
 go install github.com/utahta/intellij-wt/cmd/iwt@latest
 ```
 
-To raise already-open project windows, grant the Accessibility permission
-(System Settings → Privacy & Security → Accessibility) to the app you run
-`iwt` from (e.g. iTerm, IntelliJ IDEA). Without it, `iwt open` falls back to
-`open -a "IntelliJ IDEA"`.
+Opening and raising project windows uses the `idea` command-line launcher,
+looked up in this order:
+
+1. the `IWT_IDEA_BIN` environment variable
+2. `idea` on PATH
+3. `~/Library/Application Support/JetBrains/Toolbox/scripts/idea`
+4. `/Applications/IntelliJ IDEA.app/Contents/MacOS/idea`
+
+Without it, `iwt` falls back to `open -a "IntelliJ IDEA"`, which activates
+the app but may not raise the right project window.
 
 ## Usage
 
@@ -27,7 +33,9 @@ iwt add <branch> [base]  Create a worktree and open it in IDEA.
                          Existing branches are checked out as is; new branches are
                          created off [base] (default: origin's default branch).
                          .envrc files in the worktree are direnv-allowed automatically.
-iwt open                 Select a worktree and open/raise it in IDEA.
+iwt open [branch|path]   Open/raise a worktree in IDEA: by branch name of the
+                         current repo, by a directory inside any worktree, or
+                         fuzzy-selected when no argument is given.
 iwt list                 List worktrees with dirty state and last commit time.
 iwt prune                Select worktrees to remove (Tab to multi-select).
                          --merged removes all worktrees whose branch is merged
