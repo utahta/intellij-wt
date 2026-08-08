@@ -83,3 +83,67 @@ function iwtcd() {
   p=$(iwt path) && cd "$p"
 }
 ```
+
+## Tips
+
+### Open the Terminal tool window by default
+
+Save a window layout that has the Terminal tool window open and make it
+the default (Window → Layouts, IDEA 2023.1+). Worktree projects created
+by `iwt add` then show a terminal on their first open; reopened projects
+restore whatever layout they were closed with.
+
+### Start tmux automatically in the IDE terminal
+
+IDEA's built-in terminal sets `TERMINAL_EMULATOR=JetBrains-JediTerm`, so
+a shell snippet can start tmux only there, one session per worktree:
+
+```zsh
+# command to start in fresh IDE tmux sessions (see the next section)
+iwt_tmux_autostart="claude"
+
+if [[ "$TERMINAL_EMULATOR" == "JetBrains-JediTerm" && -z "$TMUX" ]]; then
+  session="${${PWD:t}//./_}"
+  if tmux has-session -t "=$session" 2>/dev/null; then
+    exec tmux attach-session -t "=$session"
+  else
+    exec tmux new-session -s "$session" -e IWT_TMUX_AUTOSTART="$iwt_tmux_autostart"
+  fi
+fi
+```
+
+The session is named after the worktree directory, so each worktree keeps
+its own tmux session and switching projects with `iwt open` reattaches to
+where you left off. Drop the `-e ...` part (or replace the whole branch
+with `exec tmux new-session -A -s "$session"`) if plain tmux is all you
+need.
+
+### Start an agent in fresh tmux sessions
+
+The `-e` flag above (tmux >= 3.2) marks a freshly created session so that
+a command — here Claude Code — starts automatically exactly once, driven
+by a second snippet placed near the end of .zshrc (after PATH and
+aliases are set up):
+
+```zsh
+if [[ -n "$TMUX" && -n "$IWT_TMUX_AUTOSTART" ]]; then
+  cmd="$IWT_TMUX_AUTOSTART"
+  unset IWT_TMUX_AUTOSTART
+  tmux set-environment -u IWT_TMUX_AUTOSTART 2>/dev/null
+  eval "$cmd"
+fi
+```
+
+The command is configured through the `iwt_tmux_autostart` shell variable
+at the top of the first snippet (set it to anything, e.g. `claude -c`).
+The `IWT_TMUX_AUTOSTART` environment variable itself is just the
+handshake between the two snippets — iwt does not read it, and it must
+only ever be set via `-e`: assigning it directly in .zshrc would make
+every new pane in every session re-trigger the command.
+
+The fully initialized shell launches the command itself, so there is no
+race with shell startup (unlike injecting keys with send-keys), new panes
+in the same session don't re-trigger it, and exiting the command drops
+you back to the shell. The result: `iwt add <branch>` opens IDEA on a new
+worktree with a terminal attached to its own tmux session and the agent
+already running.
