@@ -58,11 +58,10 @@ func gatherWorktrees(all bool) ([]worktreeEntry, error) {
 	return allWorktrees()
 }
 
-// allWorktrees returns the worktrees of every repository discovered under
-// the shared worktree root and $IWT_SEARCH_PATH, labeled with org/repo.
-// The current repository (when inside one) is always included, keeping the
-// list a superset of the default single-repository selection.
-func allWorktrees() ([]worktreeEntry, error) {
+// discoverRoots returns the sorted main worktree roots of every discovered
+// repository: the current one (when inside a repository), those with
+// worktrees under the shared root, and those found under $IWT_SEARCH_PATH.
+func discoverRoots() []string {
 	candidates := []string{"."}
 	if root, err := iwtRoot(); err == nil {
 		candidates = append(candidates, scanIwtRoot(root)...)
@@ -88,6 +87,43 @@ func allWorktrees() ([]worktreeEntry, error) {
 		roots = append(roots, root)
 	}
 	sort.Strings(roots)
+	return roots
+}
+
+// repoLabel returns the org/repo label for a repository root.
+func repoLabel(root string) string {
+	org := git.OriginOwner(root)
+	if org == "" {
+		org = "_local"
+	}
+	return org + "/" + filepath.Base(root)
+}
+
+// worktreesAt returns the worktrees of the repository containing dir,
+// labeled with org/repo.
+func worktreesAt(dir string) ([]worktreeEntry, error) {
+	root, err := git.MainRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	ws, err := git.Worktrees(root)
+	if err != nil {
+		return nil, err
+	}
+	prefix := repoLabel(root)
+	entries := make([]worktreeEntry, len(ws))
+	for i, w := range ws {
+		entries[i] = worktreeEntry{Worktree: w, Repo: prefix}
+	}
+	return entries, nil
+}
+
+// allWorktrees returns the worktrees of every repository discovered under
+// the shared worktree root and $IWT_SEARCH_PATH, labeled with org/repo.
+// The current repository (when inside one) is always included, keeping the
+// list a superset of the default single-repository selection.
+func allWorktrees() ([]worktreeEntry, error) {
+	roots := discoverRoots()
 
 	type repoList struct {
 		wts    []git.Worktree
@@ -99,11 +135,7 @@ func allWorktrees() ([]worktreeEntry, error) {
 		if err != nil {
 			return
 		}
-		org := git.OriginOwner(roots[i])
-		if org == "" {
-			org = "_local"
-		}
-		lists[i] = repoList{wts: ws, prefix: org + "/" + filepath.Base(roots[i])}
+		lists[i] = repoList{wts: ws, prefix: repoLabel(roots[i])}
 	})
 
 	var entries []worktreeEntry

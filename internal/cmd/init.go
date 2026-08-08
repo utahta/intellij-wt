@@ -22,8 +22,10 @@ var initCmd = &cobra.Command{
 This provides:
 
   Ctrl+O widget   pick a worktree of any repository and open it in IDEA
-  Ctrl+G widget   pick a worktree of any repository and cd into it
-                  (runs iwtcd --all; plain iwtcd picks in the current repo)
+  Ctrl+G widget   repository picker that cd's into the selection: Enter
+                  jumps to the repository, Tab drills into the
+                  highlighted repository's worktrees, Ctrl+H goes back
+  iwtcd [--all]   flat picker that cd's (--all crosses repositories)
 
 All pick through fzf; iwtcd falls back to the built-in finder when fzf
 is absent, the widgets are skipped. Override the widget keys by setting
@@ -97,7 +99,13 @@ if [[ -o interactive ]] && (( $+commands[fzf] )); then
   bindkey "${IWT_OPEN_KEY:-^O}" iwt-open-widget
 
   function iwt-cd-widget() {
-    iwtcd --all
+    local p
+    p=$(iwt list --repos --porcelain 2>/dev/null |
+      fzf --height 50% --reverse --delimiter '\t' --with-nth 1,2 --prompt 'repo> ' \
+        --bind 'tab:change-prompt(worktree> )+reload(iwt list --porcelain {3} 2>/dev/null)' \
+        --bind 'ctrl-h:change-prompt(repo> )+reload(iwt list --repos --porcelain 2>/dev/null)' |
+      cut -f3)
+    [[ -n "$p" ]] && cd "$p"
     zle reset-prompt
   }
   zle -N iwt-cd-widget

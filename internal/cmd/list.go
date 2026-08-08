@@ -13,32 +13,50 @@ import (
 var (
 	listAll       bool
 	listPorcelain bool
+	listRepos     bool
 )
 
 var listCmd = &cobra.Command{
-	Use:   "list",
+	Use:   "list [path]",
 	Short: "List worktrees of the current repository",
-	Long: `List worktrees of the current repository.
+	Long: `List worktrees of the current repository, of the repository containing
+[path], or — with --all or outside a repository — of every discovered
+repository.
 
-With --all (or outside a git repository), lists worktrees of every
-discovered repository. --porcelain prints a stable header-less
-tab-separated format for scripts and fzf wrappers:
+--repos lists repositories (their main worktree roots) instead of
+worktrees. --porcelain prints a stable header-less tab-separated format
+for scripts and fzf wrappers:
 
   <org/repo>	<branch>	<path>
 
-The first field is empty when listing a single repository.`,
-	Args: cobra.NoArgs,
+The branch field is empty with --repos; the org/repo field is empty
+when listing a single repository without [path].`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: runList,
 }
 
 func init() {
 	listCmd.Flags().BoolVarP(&listAll, "all", "a", false, "list all repositories (shared root and $IWT_SEARCH_PATH)")
 	listCmd.Flags().BoolVar(&listPorcelain, "porcelain", false, "machine-readable tab-separated output")
+	listCmd.Flags().BoolVar(&listRepos, "repos", false, "list repositories instead of worktrees (implies --all)")
 	rootCmd.AddCommand(listCmd)
 }
 
 func runList(cmd *cobra.Command, args []string) error {
-	entries, err := gatherWorktrees(listAll)
+	if listRepos {
+		if len(args) > 0 {
+			return fmt.Errorf("--repos cannot be combined with a path argument")
+		}
+		return runListRepos()
+	}
+
+	var entries []worktreeEntry
+	var err error
+	if len(args) == 1 {
+		entries, err = worktreesAt(args[0])
+	} else {
+		entries, err = gatherWorktrees(listAll)
+	}
 	if err != nil {
 		return err
 	}
@@ -93,6 +111,33 @@ func runList(cmd *cobra.Command, args []string) error {
 		} else {
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", branch, infos[i].state, infos[i].rel, e.Path)
 		}
+	}
+	return w.Flush()
+}
+
+// runListRepos lists every discovered repository's main worktree root,
+// without enumerating worktrees — org labels come from .git/config, so a
+// large search path renders near-instantly.
+func runListRepos() error {
+	roots := discoverRoots()
+	if len(roots) == 0 {
+		return fmt.Errorf("no repositories found under the worktree root or $IWT_SEARCH_PATH")
+	}
+	labels := make([]string, len(roots))
+	runParallel(len(roots), func(i int) {
+		labels[i] = repoLabel(roots[i])
+	})
+
+	if listPorcelain {
+		for i, r := range roots {
+			fmt.Printf("%s\t\t%s\n", labels[i], r)
+		}
+		return nil
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(w, "REPO\tPATH")
+	for i, r := range roots {
+		fmt.Fprintf(w, "%s\t%s\n", labels[i], r)
 	}
 	return w.Flush()
 }

@@ -37,9 +37,10 @@ iwt open [branch|path]   Open/raise a worktree in IDEA: by branch name of the
                          current repo, by a directory inside any worktree, or
                          fuzzy-selected when no argument is given. --all selects
                          across every discovered repository.
-iwt list                 List worktrees with dirty state and last commit time.
-                         --all lists every discovered repository; --porcelain
-                         prints org/repo<TAB>branch<TAB>path for scripts.
+iwt list [path]          List worktrees with dirty state and last commit time.
+                         --all spans every discovered repository; --repos lists
+                         repositories instead; --porcelain prints
+                         org/repo<TAB>branch<TAB>path for scripts.
 iwt prune                Select worktrees to remove (Tab to multi-select).
                          --merged removes all worktrees whose branch is merged
                          into origin's default branch, without prompting.
@@ -88,10 +89,13 @@ This provides:
 
 - A **Ctrl+O widget** that fuzzy-picks a worktree across all repositories
   and opens it in IDEA.
-- A **Ctrl+G widget** that picks the same way and cd's into the
-  selection. It runs `iwtcd --all`, which can also be called directly (a
-  binary cannot change its parent shell's directory, hence a shell
-  function); plain `iwtcd` picks within the current repository.
+- A **Ctrl+G widget** that cd's. It starts from the repository list
+  (rendered near-instantly — no per-repository git calls): Enter jumps
+  to the selected repository, Tab drills into the highlighted
+  repository's worktrees, Ctrl+H goes back to the repository list.
+- `iwtcd [--all]` — flat picker function that cd's, for manual use and
+  scripting (a binary cannot change its parent shell's directory, hence
+  a shell function).
 
 All pickers pipe `iwt list --porcelain` into fzf, so they follow your
 usual fzf look and keybindings. When fzf is absent, `iwtcd` falls back

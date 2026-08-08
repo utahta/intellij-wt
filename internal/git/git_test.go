@@ -1,6 +1,8 @@
 package git
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 )
@@ -32,6 +34,39 @@ detached`
 func TestParseWorktreesEmpty(t *testing.T) {
 	if got := parseWorktrees(""); len(got) != 0 {
 		t.Errorf("parseWorktrees(\"\") = %+v, want empty", got)
+	}
+}
+
+func TestConfigOriginURL(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config")
+	content := `[core]
+	repositoryformatversion = 0
+[remote "upstream"]
+	url = git@github.com:other/repo.git
+[remote "origin"]
+	fetch = +refs/heads/*:refs/remotes/origin/*
+	url = git@github.com:utahta/intellij-wt.git
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := configOriginURL(path); got != "git@github.com:utahta/intellij-wt.git" {
+		t.Errorf("configOriginURL() = %q", got)
+	}
+	if got := configOriginURL(filepath.Join(dir, "missing")); got != "" {
+		t.Errorf("configOriginURL(missing) = %q, want \"\"", got)
+	}
+}
+
+func TestConfigOriginURLNoOrigin(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config")
+	if err := os.WriteFile(path, []byte("[core]\n\tbare = false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := configOriginURL(path); got != "" {
+		t.Errorf("configOriginURL(no origin) = %q, want \"\"", got)
 	}
 }
 
