@@ -45,6 +45,8 @@ iwt prune                Select worktrees to remove (Tab to multi-select).
                          into origin's default branch, without prompting.
 iwt path                 Select a worktree and print its path (for cd wrappers).
                          --all selects across every discovered repository.
+iwt init zsh             Print zsh integration (iwtcd, Ctrl+O picker, optional
+                         tmux glue — see Shell integration below).
 ```
 
 Worktrees are placed under a shared root, organized by the origin remote's
@@ -74,17 +76,43 @@ export IWT_SEARCH_PATH="$HOME/go/src/github.com:$HOME/src"
 The scan skips hidden directories and stops descending once it finds a
 repository, so pointing it at a large source tree is cheap.
 
-### cd into a worktree
+## Shell integration
 
-A binary cannot change its parent shell's directory, so pair `iwt path` with a
-shell function:
+Add to `.zshrc`:
 
 ```zsh
-function iwtcd() {
-  local p
-  p=$(iwt path) && cd "$p"
-}
+eval "$(iwt init zsh)"
 ```
+
+This provides:
+
+- `iwtcd [--all]` — select a worktree and cd into it (a binary cannot
+  change its parent shell's directory, hence a shell function); `--all`
+  selects across every discovered repository.
+- A **Ctrl+O widget** that fuzzy-picks a worktree across all repositories
+  and opens it in IDEA. Override the key by setting `IWT_OPEN_KEY` before
+  the eval line — but not Ctrl+I, which is indistinguishable from Tab in
+  terminals.
+
+Both pickers pipe `iwt list --porcelain` into fzf, so they follow your
+usual fzf look and keybindings. When fzf is absent, `iwtcd` falls back
+to the built-in finder and the widget is skipped.
+
+With `--idea-tmux`, IDEA's built-in terminal (detected via
+`TERMINAL_EMULATOR=JetBrains-JediTerm`) attaches to a tmux session named
+after the current worktree, creating it when needed — each worktree
+keeps its own session, and switching projects with `iwt open` reattaches
+to where you left off.
+
+With `--idea-tmux-autostart <cmd>` (implies `--idea-tmux`), each freshly
+created session runs `<cmd>` once, right before the first prompt:
+
+```zsh
+eval "$(iwt init zsh --idea-tmux-autostart claude)"
+```
+
+The result: `iwt add <branch>` opens IDEA on a new worktree with a
+terminal attached to its own tmux session and the agent already running.
 
 ## Tips
 
@@ -94,82 +122,6 @@ Save a window layout that has the Terminal tool window open and make it
 the default (Window → Layouts, IDEA 2023.1+). Worktree projects created
 by `iwt add` then show a terminal on their first open; reopened projects
 restore whatever layout they were closed with.
-
-### Start tmux automatically in the IDE terminal
-
-IDEA's built-in terminal sets `TERMINAL_EMULATOR=JetBrains-JediTerm`, so
-a shell snippet can start tmux only there, one session per worktree:
-
-```zsh
-# command to start in fresh IDE tmux sessions (see the next section)
-iwt_tmux_autostart="claude"
-
-if [[ "$TERMINAL_EMULATOR" == "JetBrains-JediTerm" && -z "$TMUX" ]]; then
-  session="${${PWD:t}//./_}"
-  if tmux has-session -t "=$session" 2>/dev/null; then
-    exec tmux attach-session -t "=$session"
-  else
-    exec tmux new-session -s "$session" -e IWT_TMUX_AUTOSTART="$iwt_tmux_autostart"
-  fi
-fi
-```
-
-The session is named after the worktree directory, so each worktree keeps
-its own tmux session and switching projects with `iwt open` reattaches to
-where you left off. Drop the `-e ...` part (or replace the whole branch
-with `exec tmux new-session -A -s "$session"`) if plain tmux is all you
-need.
-
-### Start an agent in fresh tmux sessions
-
-The `-e` flag above (tmux >= 3.2) marks a freshly created session so that
-a command — here Claude Code — starts automatically exactly once, driven
-by a second snippet placed near the end of .zshrc (after PATH and
-aliases are set up):
-
-```zsh
-if [[ -n "$TMUX" && -n "$IWT_TMUX_AUTOSTART" ]]; then
-  cmd="$IWT_TMUX_AUTOSTART"
-  unset IWT_TMUX_AUTOSTART
-  tmux set-environment -u IWT_TMUX_AUTOSTART 2>/dev/null
-  eval "$cmd"
-fi
-```
-
-The command is configured through the `iwt_tmux_autostart` shell variable
-at the top of the first snippet (set it to anything, e.g. `claude -c`).
-The `IWT_TMUX_AUTOSTART` environment variable itself is just the
-handshake between the two snippets — iwt does not read it, and it must
-only ever be set via `-e`: assigning it directly in .zshrc would make
-every new pane in every session re-trigger the command.
-
-The fully initialized shell launches the command itself, so there is no
-race with shell startup (unlike injecting keys with send-keys), new panes
-in the same session don't re-trigger it, and exiting the command drops
-you back to the shell. The result: `iwt add <branch>` opens IDEA on a new
-worktree with a terminal attached to its own tmux session and the agent
-already running.
-
-### Bind a key to cross-repository open
-
-`iwt list --all --porcelain` plugs into fzf for a prompt-inline picker
-that keeps your usual fzf look, here bound to Ctrl+O (Ctrl+I is
-indistinguishable from Tab in terminals, so avoid it):
-
-```zsh
-function iwt-open-widget() {
-  local p
-  p=$(iwt list --all --porcelain |
-    fzf --height 50% --reverse --delimiter '\t' --with-nth 1,2 |
-    cut -f3) && iwt open "$p" >/dev/null
-  zle reset-prompt
-}
-zle -N iwt-open-widget
-bindkey '^O' iwt-open-widget
-```
-
-`--with-nth 1,2` shows (and matches) only org/repo and branch while the
-hidden third field carries the path to `iwt open`.
 
 ### Fix misplaced IME preedit text in the IDE terminal
 
