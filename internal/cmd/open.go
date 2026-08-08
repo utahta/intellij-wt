@@ -12,42 +12,50 @@ import (
 	"github.com/utahta/intellij-wt/internal/idea"
 )
 
+var openAll bool
+
 var openCmd = &cobra.Command{
 	Use:   "open [branch|path]",
 	Short: "Open a worktree in IDEA (raising the window if already open)",
 	Long: `Open a worktree in IntelliJ IDEA, raising the window if already open.
 
-With no argument, presents a fuzzy-finder selection. An argument is matched
-against branch names of the current repository first, then treated as a
-directory: the worktree containing it is opened, even when it belongs to a
-different repository. This makes it usable from scripts and hooks, e.g.
-iwt open "$(git rev-parse --show-toplevel)".`,
+With no argument, presents a fuzzy-finder selection: worktrees of the
+current repository, or of every discovered repository when --all is given
+or the working directory is outside a repository. Repositories are
+discovered from the worktrees under the shared root and by scanning the
+colon-separated directories in $IWT_SEARCH_PATH; the current repository
+is always included.
+
+An argument is matched against branch names of the current repository
+first, then treated as a directory: the worktree containing it is opened,
+even when it belongs to a different repository. This makes it usable from
+scripts and hooks, e.g. iwt open "$(git rev-parse --show-toplevel)".`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runOpen,
 }
 
 func init() {
+	openCmd.Flags().BoolVarP(&openAll, "all", "a", false, "select from all repositories (shared root and $IWT_SEARCH_PATH)")
 	rootCmd.AddCommand(openCmd)
 }
 
 func runOpen(cmd *cobra.Command, args []string) error {
 	var wt git.Worktree
 	if len(args) == 1 {
+		if openAll {
+			return fmt.Errorf("--all cannot be combined with an argument")
+		}
 		var err error
 		wt, err = resolveWorktree(args[0])
 		if err != nil {
 			return err
 		}
 	} else {
-		root, err := git.MainRoot(".")
+		wts, labels, err := gatherWorktrees(openAll)
 		if err != nil {
 			return err
 		}
-		wts, err := git.Worktrees(root)
-		if err != nil {
-			return err
-		}
-		wt, err = selectWorktree(wts, "open in IntelliJ IDEA")
+		wt, err = selectFrom(wts, labels, "open in IntelliJ IDEA")
 		if err != nil {
 			return err
 		}

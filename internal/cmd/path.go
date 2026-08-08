@@ -4,14 +4,17 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-
-	"github.com/utahta/intellij-wt/internal/git"
 )
+
+var pathAll bool
 
 var pathCmd = &cobra.Command{
 	Use:   "path",
 	Short: "Select a worktree and print its path (for cd wrappers)",
 	Long: `Select a worktree and print its path to stdout.
+
+With --all (or outside a git repository), selects from every discovered
+repository instead of the current one.
 
 Pair it with a shell function to cd into a worktree:
 
@@ -24,19 +27,16 @@ Pair it with a shell function to cd into a worktree:
 }
 
 func init() {
+	pathCmd.Flags().BoolVarP(&pathAll, "all", "a", false, "select from all repositories (shared root and $IWT_SEARCH_PATH)")
 	rootCmd.AddCommand(pathCmd)
 }
 
 func runPath(cmd *cobra.Command, args []string) error {
-	root, err := git.MainRoot(".")
+	wts, labels, err := gatherWorktrees(pathAll)
 	if err != nil {
 		return err
 	}
-	wts, err := git.Worktrees(root)
-	if err != nil {
-		return err
-	}
-	wt, err := selectWorktree(wts, "print worktree path")
+	wt, err := selectFrom(wts, labels, "print worktree path")
 	if err != nil {
 		return err
 	}

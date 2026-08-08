@@ -32,13 +32,9 @@ func Execute() error {
 // org comes from the origin remote URL, falling back to "_local". The leaf
 // directory doubles as the IDEA project name, hence the repo prefix.
 func worktreePath(root, branch string) (string, error) {
-	base := os.Getenv("IWT_ROOT")
-	if base == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("cannot resolve worktree root: %w (set IWT_ROOT)", err)
-		}
-		base = filepath.Join(home, ".intellij-wt", "worktrees")
+	base, err := iwtRoot()
+	if err != nil {
+		return "", err
 	}
 	org := git.OriginOwner(root)
 	if org == "" {
@@ -48,14 +44,22 @@ func worktreePath(root, branch string) (string, error) {
 	return filepath.Join(base, org, name, name+"--"+strings.ReplaceAll(branch, "/", "-")), nil
 }
 
-func selectWorktree(wts []git.Worktree, header string) (git.Worktree, error) {
+func selectFrom(wts []git.Worktree, labels []string, header string) (git.Worktree, error) {
 	idx, err := fuzzyfinder.Find(wts, func(i int) string {
-		return worktreeLabel(wts[i])
+		return labels[i]
 	}, fuzzyfinder.WithHeader(header))
 	if err != nil {
 		return git.Worktree{}, err
 	}
 	return wts[idx], nil
+}
+
+func defaultLabels(wts []git.Worktree) []string {
+	labels := make([]string, len(wts))
+	for i, w := range wts {
+		labels[i] = worktreeLabel(w)
+	}
+	return labels
 }
 
 func selectWorktrees(wts []git.Worktree, header string) ([]git.Worktree, error) {

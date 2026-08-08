@@ -35,12 +35,14 @@ iwt add <branch> [base]  Create a worktree and open it in IDEA.
                          .envrc files in the worktree are direnv-allowed automatically.
 iwt open [branch|path]   Open/raise a worktree in IDEA: by branch name of the
                          current repo, by a directory inside any worktree, or
-                         fuzzy-selected when no argument is given.
+                         fuzzy-selected when no argument is given. --all selects
+                         across every discovered repository.
 iwt list                 List worktrees with dirty state and last commit time.
 iwt prune                Select worktrees to remove (Tab to multi-select).
                          --merged removes all worktrees whose branch is merged
                          into origin's default branch, without prompting.
 iwt path                 Select a worktree and print its path (for cd wrappers).
+                         --all selects across every discovered repository.
 ```
 
 Worktrees are placed under a shared root, organized by the origin remote's
@@ -53,6 +55,22 @@ repo and branch.
 Worktrees created by older versions (the sibling `<repo>-wt/` layout) keep
 working — `list`, `open`, and `prune` operate on whatever `git worktree`
 reports, regardless of location.
+
+### Selecting across repositories
+
+`iwt open --all` and `iwt path --all` select from every discovered
+repository, always including the current one — this is also the default
+when run outside a git repository.
+Repositories are discovered from the worktrees under the shared root, plus
+any git repositories found by scanning the colon-separated directories in
+`IWT_SEARCH_PATH`:
+
+```bash
+export IWT_SEARCH_PATH="$HOME/go/src/github.com:$HOME/src"
+```
+
+The scan skips hidden directories and stops descending once it finds a
+repository, so pointing it at a large source tree is cheap.
 
 ### cd into a worktree
 
