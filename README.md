@@ -16,6 +16,14 @@ command-line launcher (untested).
 go install github.com/utahta/intellij-wt/cmd/iwt@latest
 ```
 
+The shell widgets — the heart of the workflow (see Shell integration
+below) — need [fzf](https://github.com/junegunn/fzf); every iwt command
+works without it, through a built-in finder.
+
+```bash
+brew install fzf
+```
+
 Opening and raising project windows uses the `idea` command-line launcher,
 looked up in this order:
 

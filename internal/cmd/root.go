@@ -3,6 +3,7 @@ package cmd
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,7 +25,9 @@ var rootCmd = &cobra.Command{
 
 func Execute() error {
 	err := rootCmd.Execute()
-	if err != nil {
+	// Cancelling a picker is not an error worth reporting; the nonzero
+	// exit still stops && chains in scripts.
+	if err != nil && !errors.Is(err, fuzzyfinder.ErrAbort) {
 		fmt.Fprintln(os.Stderr, paint("1;31", "iwt: "+err.Error()))
 	}
 	return err
