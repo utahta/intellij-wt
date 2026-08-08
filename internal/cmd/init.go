@@ -83,19 +83,24 @@ function _iwt-branches() {
 
 if [[ -o interactive ]] && (( $+commands[fzf] )); then
   # Staged picker shared by both widgets: repositories, then TAB into
-  # one repository's worktrees. Esc backs out one level at a time. With
-  # "add" as $1, CTRL-N creates a worktree via iwt add for a typed or
-  # picked branch. Prints the picked path. The repository context lives
-  # in shell variables, so a query matching nothing (a new branch name)
-  # never loses it.
+  # one repository's worktrees. Esc backs out one level at a time. In
+  # "open" mode ($1), CTRL-N creates a worktree via iwt add for a typed
+  # or picked branch. Prints the picked path. The repository context
+  # lives in shell variables, so a query matching nothing (a new branch
+  # name) never loses it.
   function _iwt-pick-staged() {
-    local with_add="$1" out ret key line label repo p q sel branch expect
-    expect='ctrl-h'
-    [[ -n "$with_add" ]] && expect='ctrl-h,ctrl-n'
+    local mode="$1" out ret key line label repo p q sel branch
+    local verb='cd' expect='ctrl-h' keys2='ctrl-h/esc: back'
+    if [[ "$mode" == open ]]; then
+      verb='open in IDEA'
+      expect='ctrl-h,ctrl-n'
+      keys2='ctrl-n: new worktree | ctrl-h/esc: back'
+    fi
     while true; do
       out=$(iwt list --repos --porcelain 2>/dev/null |
         fzf --height 50% --reverse --delimiter '\t' --with-nth 1,2 \
-          --prompt 'repo> ' --expect=tab)
+          --prompt 'repo> ' --header "enter: $verb | tab: worktrees" \
+          --expect=tab)
       ret=$?
       (( ret == 130 || ret == 2 )) && return 1
       key="${out%%$'\n'*}"
@@ -111,7 +116,8 @@ if [[ -o interactive ]] && (( $+commands[fzf] )); then
       while true; do
         out=$(iwt list --porcelain "$repo" 2>/dev/null |
           fzf --height 50% --reverse --delimiter '\t' --with-nth 1,2 \
-            --prompt "$label worktree> " --expect=$expect)
+            --prompt "$label worktree> " --header "enter: $verb | $keys2" \
+            --expect=$expect)
         ret=$?
         (( ret == 2 )) && return 1
         (( ret == 130 )) && break # Esc: one level up, back to repositories
@@ -122,7 +128,9 @@ if [[ -o interactive ]] && (( $+commands[fzf] )); then
           ctrl-h) break ;;
           ctrl-n)
             out=$(_iwt-branches "$repo" |
-              fzf --height 50% --reverse --prompt 'new branch> ' --print-query)
+              fzf --height 50% --reverse --prompt 'new branch> ' \
+                --header 'enter: create worktree (type a new name or pick) | esc: back' \
+                --print-query)
             ret=$?
             (( ret == 130 || ret == 2 )) && continue
             q="${out%%$'\n'*}"
@@ -149,7 +157,7 @@ if [[ -o interactive ]] && (( $+commands[fzf] )); then
 
   function iwt-open-widget() {
     local p
-    p=$(_iwt-pick-staged add) && [[ -n "$p" ]] && iwt open "$p" >/dev/null
+    p=$(_iwt-pick-staged open) && [[ -n "$p" ]] && iwt open "$p" >/dev/null
     zle reset-prompt
   }
   zle -N iwt-open-widget
