@@ -1,4 +1,4 @@
-// Package idea opens IntelliJ IDEA project windows on macOS.
+// Package idea opens and focuses IntelliJ IDEA project windows.
 package idea
 
 import (
@@ -14,12 +14,9 @@ const appName = "IntelliJ IDEA"
 // Open opens path as a project in IDEA. When the project is already open,
 // IDEA itself raises and focuses the existing window. The "idea"
 // command-line launcher is preferred because it routes through the IDE's
-// own project-open path, which handles the focusing; `open -a` (the
-// fallback) only activates the app.
+// own project-open path, which handles the focusing; on macOS `open -a`
+// (which only activates the app) serves as a fallback.
 func Open(path string) error {
-	if err := ensureDarwin(); err != nil {
-		return err
-	}
 	if launcher := findLauncher(); launcher != "" {
 		cmd := exec.Command(launcher, path)
 		if err := cmd.Start(); err == nil {
@@ -29,12 +26,17 @@ func Open(path string) error {
 			return nil
 		}
 	}
-	return exec.Command("open", "-a", appName, path).Run()
+	if runtime.GOOS == "darwin" {
+		return exec.Command("open", "-a", appName, path).Run()
+	}
+	return fmt.Errorf("no IntelliJ IDEA launcher found: install the idea command-line launcher or set IWT_IDEA_BIN")
 }
 
 // findLauncher locates the "idea" command-line launcher, in order:
-// $IWT_IDEA_BIN, PATH, the JetBrains Toolbox scripts directory, and the
-// app bundle (whose binary also forwards to a running instance).
+// $IWT_IDEA_BIN, PATH, the JetBrains Toolbox scripts directories (macOS
+// and Linux), and the macOS app bundle (whose binary also forwards to a
+// running instance). Candidates that don't exist are skipped, so the
+// platform-foreign paths are harmless.
 func findLauncher() string {
 	candidates := []string{os.Getenv("IWT_IDEA_BIN")}
 	if p, err := exec.LookPath("idea"); err == nil {
@@ -42,7 +44,8 @@ func findLauncher() string {
 	}
 	if home, err := os.UserHomeDir(); err == nil {
 		candidates = append(candidates,
-			filepath.Join(home, "Library", "Application Support", "JetBrains", "Toolbox", "scripts", "idea"))
+			filepath.Join(home, "Library", "Application Support", "JetBrains", "Toolbox", "scripts", "idea"),
+			filepath.Join(home, ".local", "share", "JetBrains", "Toolbox", "scripts", "idea"))
 	}
 	candidates = append(candidates, "/Applications/IntelliJ IDEA.app/Contents/MacOS/idea")
 	for _, p := range candidates {
@@ -54,11 +57,4 @@ func findLauncher() string {
 		}
 	}
 	return ""
-}
-
-func ensureDarwin() error {
-	if runtime.GOOS != "darwin" {
-		return fmt.Errorf("IntelliJ IDEA integration supports macOS only")
-	}
-	return nil
 }

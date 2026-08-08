@@ -7,7 +7,8 @@ Manage git worktrees and open them in IntelliJ IDEA, from the command line.
   window is already open, it is raised to the front instead
 - `iwt prune` fuzzy-selects worktrees to remove, offering to delete merged branches
 
-macOS only.
+Developed and tested on macOS; Linux should work through the `idea`
+command-line launcher (untested).
 
 ## Install
 
@@ -20,11 +21,13 @@ looked up in this order:
 
 1. the `IWT_IDEA_BIN` environment variable
 2. `idea` on PATH
-3. `~/Library/Application Support/JetBrains/Toolbox/scripts/idea`
+3. `~/Library/Application Support/JetBrains/Toolbox/scripts/idea` (macOS)
+   or `~/.local/share/JetBrains/Toolbox/scripts/idea` (Linux)
 4. `/Applications/IntelliJ IDEA.app/Contents/MacOS/idea`
 
-Without it, `iwt` falls back to `open -a "IntelliJ IDEA"`, which activates
-the app but may not raise the right project window.
+Without it, `iwt` falls back to `open -a "IntelliJ IDEA"` on macOS, which
+activates the app but may not raise the right project window; on other
+platforms the launcher is required.
 
 ## Usage
 
