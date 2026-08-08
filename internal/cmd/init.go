@@ -91,7 +91,7 @@ if [[ -o interactive ]] && (( $+commands[fzf] )); then
   # lives in shell variables, so a query matching nothing (a new branch
   # name) never loses it.
   function _iwt-pick-staged() {
-    local mode="$1" out ret key line label repo p q sel branch
+    local mode="$1" out ret key line label repo p q sel branch tty_state
     local verb='cd' expect='ctrl-h' keys2='ctrl-h/esc: back'
     if [[ "$mode" == open ]]; then
       verb='open in IDEA'
@@ -130,7 +130,14 @@ if [[ -o interactive ]] && (( $+commands[fzf] )); then
           ctrl-h) break ;;
           ctrl-d)
             p="${line##*$'\t'}"
-            [[ -n "$p" ]] && iwt prune "$p" </dev/tty >&2
+            if [[ -n "$p" ]]; then
+              # zle keeps the tty with echo off; restore sane settings so
+              # the confirmation prompts show what is typed.
+              tty_state=$(stty -g </dev/tty)
+              stty sane </dev/tty
+              iwt prune "$p" </dev/tty >&2
+              stty "$tty_state" </dev/tty
+            fi
             continue
             ;;
           ctrl-x)

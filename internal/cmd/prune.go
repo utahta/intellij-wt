@@ -20,7 +20,10 @@ var pruneCmd = &cobra.Command{
 	Long: `Select worktrees to remove. The main worktree is never listed.
 
 Dirty worktrees require confirmation (or --force). After removal, if the
-branch is fully merged into origin's default branch, offers to delete it.
+branch is fully merged into origin's default branch, offers to delete it;
+when that cannot be determined (origin's default branch is unset), asks
+explicitly, still deleting with git branch -d so unmerged branches are
+refused.
 
 A target argument skips the selection: a branch name of the current
 repository, or a directory inside any worktree of any repository. The
@@ -136,13 +139,26 @@ func removeWorktrees(root string, wts []git.Worktree) {
 		}
 		fmt.Fprintln(os.Stderr, paint("1;32", "removed: "+w.Path))
 
-		if w.Branch != "" && defaultBranch != "" && git.IsMerged(root, w.Branch, defaultBranch) {
-			if pruneMerged || confirm(fmt.Sprintf("branch %q is merged into %s. Delete it?", w.Branch, defaultBranch)) {
-				if err := git.DeleteBranch(root, w.Branch); err != nil {
-					fmt.Fprintln(os.Stderr, paint("1;31", fmt.Sprintf("iwt: %v", err)))
-				} else {
-					fmt.Fprintln(os.Stderr, paint("1;32", "deleted branch: "+w.Branch))
-				}
+		if w.Branch == "" {
+			continue
+		}
+		// Offer to delete the branch: automatically confirmed in --merged
+		// mode, asked when it is fully merged, and asked explicitly when
+		// that cannot be determined (no origin default branch) — the
+		// deletion below uses git branch -d, so git still refuses a
+		// branch that turns out to be unmerged.
+		del := false
+		switch {
+		case defaultBranch != "" && git.IsMerged(root, w.Branch, defaultBranch):
+			del = pruneMerged || confirm(fmt.Sprintf("branch %q is merged into %s. Delete it?", w.Branch, defaultBranch))
+		case defaultBranch == "" && !pruneMerged:
+			del = confirm(fmt.Sprintf("branch %q: cannot tell whether it is merged (origin's default branch is unset). Delete it anyway?", w.Branch))
+		}
+		if del {
+			if err := git.DeleteBranch(root, w.Branch); err != nil {
+				fmt.Fprintln(os.Stderr, paint("1;31", fmt.Sprintf("iwt: %v", err)))
+			} else {
+				fmt.Fprintln(os.Stderr, paint("1;32", "deleted branch: "+w.Branch))
 			}
 		}
 	}
