@@ -46,8 +46,8 @@ iwt prune                Select worktrees to remove (Tab to multi-select).
                          into origin's default branch, without prompting.
 iwt path                 Select a worktree and print its path (for cd wrappers).
                          --all selects across every discovered repository.
-iwt init zsh             Print zsh integration (iwtcd, Ctrl+O picker, optional
-                         tmux glue — see Shell integration below).
+iwt init zsh             Print zsh integration (Ctrl+O / Ctrl+G pickers,
+                         optional tmux glue — see Shell integration below).
 ```
 
 Worktrees are placed under a shared root, organized by the origin remote's
@@ -87,19 +87,19 @@ eval "$(iwt init zsh)"
 
 This provides:
 
-- A **Ctrl+O widget** that fuzzy-picks a worktree across all repositories
-  and opens it in IDEA.
-- A **Ctrl+G widget** that cd's. It starts from the repository list
-  (rendered near-instantly — no per-repository git calls): Enter jumps
-  to the selected repository, Tab drills into the highlighted
-  repository's worktrees, Ctrl+H goes back to the repository list.
-- `iwtcd [--all]` — flat picker function that cd's, for manual use and
-  scripting (a binary cannot change its parent shell's directory, hence
-  a shell function).
+- A **Ctrl+O widget** that opens things in IDEA. It starts from the
+  repository list: Enter opens the selected repository, Tab drills into
+  the highlighted repository's worktrees, Ctrl+H or Esc goes back one
+  level. **Ctrl+N** (inside a repository's worktrees) creates a new
+  worktree via `iwt add` — type a new branch name or pick an existing
+  local/remote branch — so IDEA, tmux, and the agent come up without
+  changing the shell's directory.
+- A **Ctrl+G widget** with the same staged navigation that cd's into
+  the selection instead (and has no Ctrl+N).
 
-All pickers pipe `iwt list --porcelain` into fzf, so they follow your
-usual fzf look and keybindings. When fzf is absent, `iwtcd` falls back
-to the built-in finder and the widgets are skipped. Override the keys by
+Both widgets pipe `iwt list --porcelain` into fzf, so they follow your
+usual fzf look and keybindings (and are skipped when fzf is absent —
+see `iwt path --help` for a DIY cd function). Override the keys by
 setting `IWT_OPEN_KEY` / `IWT_CD_KEY` before the eval line — but not
 Ctrl+I, which is indistinguishable from Tab in terminals; Ctrl+S also
 requires terminal flow control to be disabled first (`stty -ixon`).
