@@ -21,12 +21,13 @@ var initCmd = &cobra.Command{
 
 This provides:
 
-  iwtcd [--all]   select a worktree and cd into it
   Ctrl+O widget   pick a worktree of any repository and open it in IDEA
+  Ctrl+G widget   pick a worktree of any repository and cd into it
+                  (runs iwtcd --all; plain iwtcd picks in the current repo)
 
-Both pick through fzf; iwtcd falls back to the built-in finder when fzf
-is absent, the widget is skipped. Override the widget key by setting
-IWT_OPEN_KEY before the eval line.
+All pick through fzf; iwtcd falls back to the built-in finder when fzf
+is absent, the widgets are skipped. Override the widget keys by setting
+IWT_OPEN_KEY / IWT_CD_KEY before the eval line.
 
 --idea-tmux adds: inside IDEA's built-in terminal, attach to a tmux
 session named after the current worktree, creating it when needed.
@@ -94,6 +95,13 @@ if [[ -o interactive ]] && (( $+commands[fzf] )); then
   }
   zle -N iwt-open-widget
   bindkey "${IWT_OPEN_KEY:-^O}" iwt-open-widget
+
+  function iwt-cd-widget() {
+    iwtcd --all
+    zle reset-prompt
+  }
+  zle -N iwt-cd-widget
+  bindkey "${IWT_CD_KEY:-^G}" iwt-cd-widget
 fi
 `
 

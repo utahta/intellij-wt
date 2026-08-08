@@ -86,17 +86,19 @@ eval "$(iwt init zsh)"
 
 This provides:
 
-- `iwtcd [--all]` — select a worktree and cd into it (a binary cannot
-  change its parent shell's directory, hence a shell function); `--all`
-  selects across every discovered repository.
 - A **Ctrl+O widget** that fuzzy-picks a worktree across all repositories
-  and opens it in IDEA. Override the key by setting `IWT_OPEN_KEY` before
-  the eval line — but not Ctrl+I, which is indistinguishable from Tab in
-  terminals.
+  and opens it in IDEA.
+- A **Ctrl+G widget** that picks the same way and cd's into the
+  selection. It runs `iwtcd --all`, which can also be called directly (a
+  binary cannot change its parent shell's directory, hence a shell
+  function); plain `iwtcd` picks within the current repository.
 
-Both pickers pipe `iwt list --porcelain` into fzf, so they follow your
+All pickers pipe `iwt list --porcelain` into fzf, so they follow your
 usual fzf look and keybindings. When fzf is absent, `iwtcd` falls back
-to the built-in finder and the widget is skipped.
+to the built-in finder and the widgets are skipped. Override the keys by
+setting `IWT_OPEN_KEY` / `IWT_CD_KEY` before the eval line — but not
+Ctrl+I, which is indistinguishable from Tab in terminals; Ctrl+S also
+requires terminal flow control to be disabled first (`stty -ixon`).
 
 With `--idea-tmux`, IDEA's built-in terminal (detected via
 `TERMINAL_EMULATOR=JetBrains-JediTerm`) attaches to a tmux session named
