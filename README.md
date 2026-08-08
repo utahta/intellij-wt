@@ -147,3 +147,17 @@ in the same session don't re-trigger it, and exiting the command drops
 you back to the shell. The result: `iwt add <branch>` opens IDEA on a new
 worktree with a terminal attached to its own tmux session and the agent
 already running.
+
+### Fix misplaced IME preedit text in the IDE terminal
+
+With the "Reworked" terminal engine, composing Japanese (or other IME)
+input in a TUI app draws the uncommitted preedit string away from the
+actual cursor position — committed text still lands correctly, but
+composing is hard to follow. Switching Settings → Tools → Terminal →
+Terminal engine to **Classic** fixes it.
+
+Classic drops Reworked-only features such as command blocks and prompt
+completion, but those are inactive inside full-screen TUI apps anyway,
+so a tmux/agent-centric workflow loses nothing. (Observed on IntelliJ
+IDEA 2026.2 / macOS / Apple Japanese IME as of 2026-08; newer versions
+may fix the engine, so re-check before applying.)
