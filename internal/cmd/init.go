@@ -23,10 +23,12 @@ This provides:
 
   Ctrl+O widget   repository picker that opens the selection in IDEA:
                   Enter opens the repository, Tab drills into its
-                  worktrees, Ctrl+N creates a worktree via iwt add for
-                  a typed or picked branch, Ctrl+H/Esc goes back a level
+                  worktrees; there Ctrl+N creates a worktree via iwt add
+                  for a typed or picked branch, Ctrl+D removes the
+                  highlighted one, Ctrl+X prunes merged ones, and
+                  Ctrl+H/Esc goes back a level
   Ctrl+G widget   the same navigation, but cd's into the selection and
-                  has no Ctrl+N
+                  only navigates
 
 Both pick through fzf and are skipped when fzf is absent. Override the
 widget keys by setting IWT_OPEN_KEY / IWT_CD_KEY before the eval line.
@@ -93,8 +95,8 @@ if [[ -o interactive ]] && (( $+commands[fzf] )); then
     local verb='cd' expect='ctrl-h' keys2='ctrl-h/esc: back'
     if [[ "$mode" == open ]]; then
       verb='open in IDEA'
-      expect='ctrl-h,ctrl-n'
-      keys2='ctrl-n: new worktree | ctrl-h/esc: back'
+      expect='ctrl-h,ctrl-n,ctrl-d,ctrl-x'
+      keys2='ctrl-n: new | ctrl-d: remove | ctrl-x: prune merged | ctrl-h/esc: back'
     fi
     while true; do
       out=$(iwt list --repos --porcelain 2>/dev/null |
@@ -126,6 +128,15 @@ if [[ -o interactive ]] && (( $+commands[fzf] )); then
         [[ "$out" == *$'\n'* ]] && line="${out#*$'\n'}"
         case "$key" in
           ctrl-h) break ;;
+          ctrl-d)
+            p="${line##*$'\t'}"
+            [[ -n "$p" ]] && iwt prune "$p" </dev/tty >&2
+            continue
+            ;;
+          ctrl-x)
+            (cd "$repo" && iwt prune --merged) >&2
+            continue
+            ;;
           ctrl-n)
             out=$(_iwt-branches "$repo" |
               fzf --height 50% --reverse --prompt 'new branch> ' \

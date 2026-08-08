@@ -44,7 +44,8 @@ iwt list [path]          List worktrees with dirty state and last commit time.
                          --all spans every discovered repository; --repos lists
                          repositories instead; --porcelain prints
                          org/repo<TAB>branch<TAB>path for scripts.
-iwt prune                Select worktrees to remove (Tab to multi-select).
+iwt prune [target]       Select worktrees to remove (Tab to multi-select), or
+                         remove the branch/path target directly.
                          --merged removes all worktrees whose branch is merged
                          into origin's default branch, without prompting.
 iwt path                 Select a worktree and print its path (for cd wrappers).
@@ -90,15 +91,19 @@ eval "$(iwt init zsh)"
 
 This provides:
 
-- A **Ctrl+O widget** that opens things in IDEA. It starts from the
-  repository list: Enter opens the selected repository, Tab drills into
-  the highlighted repository's worktrees, Ctrl+H or Esc goes back one
-  level. **Ctrl+N** (inside a repository's worktrees) creates a new
-  worktree via `iwt add` — type a new branch name or pick an existing
-  local/remote branch — so IDEA, tmux, and the agent come up without
-  changing the shell's directory.
+- A **Ctrl+O widget** that manages worktrees around IDEA. It starts from
+  the repository list: Enter opens the selected repository, Tab drills
+  into the highlighted repository's worktrees, Ctrl+H or Esc goes back
+  one level. Inside a repository's worktrees:
+  - **Ctrl+N** creates a new worktree via `iwt add` — type a new branch
+    name or pick an existing local/remote branch — so IDEA, tmux, and
+    the agent come up without changing the shell's directory.
+  - **Ctrl+D** removes the highlighted worktree, with the same
+    confirmations as `iwt prune`.
+  - **Ctrl+X** prunes all merged worktrees of that repository
+    (`iwt prune --merged`).
 - A **Ctrl+G widget** with the same staged navigation that cd's into
-  the selection instead (and has no Ctrl+N).
+  the selection instead (navigation only).
 
 Both widgets pipe `iwt list --porcelain` into fzf, so they follow your
 usual fzf look and keybindings (and are skipped when fzf is absent —

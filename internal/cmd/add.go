@@ -70,7 +70,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 
 	if !addNoOpen {
 		if err := idea.Open(path); err != nil {
-			fmt.Fprintln(os.Stderr, "iwt: failed to open IDEA:", err)
+			fmt.Fprintln(os.Stderr, paint("1;31", fmt.Sprintf("iwt: failed to open IDEA: %v", err)))
 		}
 	}
 	fmt.Println(path)

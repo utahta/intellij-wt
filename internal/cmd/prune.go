@@ -15,17 +15,21 @@ var (
 )
 
 var pruneCmd = &cobra.Command{
-	Use:   "prune",
+	Use:   "prune [target]",
 	Short: "Select worktrees to remove (Tab to multi-select)",
 	Long: `Select worktrees to remove. The main worktree is never listed.
 
 Dirty worktrees require confirmation (or --force). After removal, if the
 branch is fully merged into origin's default branch, offers to delete it.
 
+A target argument skips the selection: a branch name of the current
+repository, or a directory inside any worktree of any repository. The
+main worktree is refused.
+
 With --merged, skips the selection and removes every worktree whose branch
 is merged into origin's default branch, deleting the branch as well. Dirty
 worktrees are skipped unless --force.`,
-	Args: cobra.NoArgs,
+	Args: cobra.MaximumNArgs(1),
 	RunE: runPrune,
 }
 
@@ -36,6 +40,13 @@ func init() {
 }
 
 func runPrune(cmd *cobra.Command, args []string) error {
+	if len(args) == 1 {
+		if pruneMerged {
+			return fmt.Errorf("--merged cannot be combined with a target argument")
+		}
+		return pruneTarget(args[0])
+	}
+
 	root, err := git.MainRoot(".")
 	if err != nil {
 		return err
@@ -51,7 +62,7 @@ func runPrune(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if len(wts) == 0 {
-		fmt.Fprintln(os.Stderr, "no removable worktrees")
+		fmt.Fprintln(os.Stderr, paint("33", "no removable worktrees"))
 		return nil
 	}
 
@@ -68,7 +79,7 @@ func runPrune(cmd *cobra.Command, args []string) error {
 			}
 		}
 		if len(selected) == 0 {
-			fmt.Fprintln(os.Stderr, "no merged worktrees")
+			fmt.Fprintln(os.Stderr, paint("33", "no merged worktrees"))
 			return git.PruneWorktrees(root)
 		}
 	} else {
@@ -78,34 +89,61 @@ func runPrune(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	for _, w := range selected {
+	removeWorktrees(root, selected)
+	return git.PruneWorktrees(root)
+}
+
+// pruneTarget removes a single worktree resolved from a branch name or a
+// directory, with the same confirmations as the interactive flow.
+func pruneTarget(target string) error {
+	wt, err := resolveWorktree(target)
+	if err != nil {
+		return err
+	}
+	if wt.Main {
+		return fmt.Errorf("cannot remove the main worktree %s", wt.Path)
+	}
+	root, err := git.MainRoot(wt.Path)
+	if err != nil {
+		return err
+	}
+	removeWorktrees(root, []git.Worktree{wt})
+	return git.PruneWorktrees(root)
+}
+
+// removeWorktrees removes the given worktrees of root: dirty ones need
+// confirmation (or --force), and fully merged branches are deleted after
+// a confirmation (automatically in --merged mode). Failures are reported
+// and skipped.
+func removeWorktrees(root string, wts []git.Worktree) {
+	defaultBranch := git.DefaultBranch(root)
+	for _, w := range wts {
 		force := pruneForce
 		if !force && git.IsDirty(w.Path) {
 			if pruneMerged {
-				fmt.Fprintf(os.Stderr, "skipped (dirty): %s\n", w.Path)
+				fmt.Fprintln(os.Stderr, paint("33", "skipped (dirty): "+w.Path))
 				continue
 			}
 			if !confirm(fmt.Sprintf("%s has uncommitted changes. Remove anyway?", w.Path)) {
-				fmt.Fprintf(os.Stderr, "skipped: %s\n", w.Path)
+				fmt.Fprintln(os.Stderr, paint("33", "skipped: "+w.Path))
 				continue
 			}
 			force = true
 		}
 		if err := git.RemoveWorktree(root, w.Path, force); err != nil {
-			fmt.Fprintf(os.Stderr, "iwt: %v\n", err)
+			fmt.Fprintln(os.Stderr, paint("1;31", fmt.Sprintf("iwt: %v", err)))
 			continue
 		}
-		fmt.Fprintf(os.Stderr, "removed: %s\n", w.Path)
+		fmt.Fprintln(os.Stderr, paint("1;32", "removed: "+w.Path))
 
 		if w.Branch != "" && defaultBranch != "" && git.IsMerged(root, w.Branch, defaultBranch) {
 			if pruneMerged || confirm(fmt.Sprintf("branch %q is merged into %s. Delete it?", w.Branch, defaultBranch)) {
 				if err := git.DeleteBranch(root, w.Branch); err != nil {
-					fmt.Fprintf(os.Stderr, "iwt: %v\n", err)
+					fmt.Fprintln(os.Stderr, paint("1;31", fmt.Sprintf("iwt: %v", err)))
 				} else {
-					fmt.Fprintf(os.Stderr, "deleted branch: %s\n", w.Branch)
+					fmt.Fprintln(os.Stderr, paint("1;32", "deleted branch: "+w.Branch))
 				}
 			}
 		}
 	}
-	return git.PruneWorktrees(root)
 }

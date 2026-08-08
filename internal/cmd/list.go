@@ -24,8 +24,9 @@ var listCmd = &cobra.Command{
 repository.
 
 --repos lists repositories (their main worktree roots) instead of
-worktrees. --porcelain prints a stable header-less tab-separated format
-for scripts and fzf wrappers:
+worktrees, the current repository first so pickers start with it
+highlighted. --porcelain prints a stable header-less tab-separated
+format for scripts and fzf wrappers:
 
   <org/repo>	<branch>	<path>
 
@@ -117,11 +118,21 @@ func runList(cmd *cobra.Command, args []string) error {
 
 // runListRepos lists every discovered repository's main worktree root,
 // without enumerating worktrees — org labels come from .git/config, so a
-// large search path renders near-instantly.
+// large search path renders near-instantly. The current repository comes
+// first so pickers start with it highlighted.
 func runListRepos() error {
 	roots := discoverRoots()
 	if len(roots) == 0 {
 		return fmt.Errorf("no repositories found under the worktree root or $IWT_SEARCH_PATH")
+	}
+	if cur := resolveRoot("."); cur != "" {
+		for i, r := range roots {
+			if r == cur {
+				copy(roots[1:i+1], roots[:i])
+				roots[0] = cur
+				break
+			}
+		}
 	}
 	labels := make([]string, len(roots))
 	runParallel(len(roots), func(i int) {

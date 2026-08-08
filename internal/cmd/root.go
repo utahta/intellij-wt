@@ -23,7 +23,23 @@ var rootCmd = &cobra.Command{
 }
 
 func Execute() error {
-	return rootCmd.Execute()
+	err := rootCmd.Execute()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, paint("1;31", "iwt: "+err.Error()))
+	}
+	return err
+}
+
+// paint wraps s in an ANSI color (SGR code) when stderr is a terminal, so
+// notices stand out between fzf redraws. NO_COLOR disables it.
+func paint(code, s string) string {
+	if os.Getenv("NO_COLOR") != "" {
+		return s
+	}
+	if fi, err := os.Stderr.Stat(); err != nil || fi.Mode()&os.ModeCharDevice == 0 {
+		return s
+	}
+	return "\033[" + code + "m" + s + "\033[0m"
 }
 
 // worktreePath places worktrees under a shared root (default
@@ -91,7 +107,7 @@ func worktreeLabel(w git.Worktree) string {
 }
 
 func confirm(msg string) bool {
-	fmt.Fprintf(os.Stderr, "%s [y/N]: ", msg)
+	fmt.Fprintf(os.Stderr, "%s [y/N]: ", paint("1;33", msg))
 	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 	line = strings.TrimSpace(line)
 	return line == "y" || line == "Y"

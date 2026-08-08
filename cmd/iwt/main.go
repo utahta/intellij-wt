@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/utahta/intellij-wt/internal/cmd"
@@ -9,7 +8,6 @@ import (
 
 func main() {
 	if err := cmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "iwt:", err)
 		os.Exit(1)
 	}
 }
