@@ -107,7 +107,9 @@ This provides:
 
 Both widgets pipe `iwt list --porcelain` into fzf, so they follow your
 usual fzf look and keybindings (and are skipped when fzf is absent —
-see `iwt path --help` for a DIY cd function). Override the keys by
+see `iwt path --help` for a DIY cd function). Paths are shown dimmed to
+tell same-named repositories apart, but stay out of fuzzy matching so
+queries only hit org/repo and branch names. Override the keys by
 setting `IWT_OPEN_KEY` / `IWT_CD_KEY` before the eval line — but not
 Ctrl+I, which is indistinguishable from Tab in terminals; Ctrl+S also
 requires terminal flow control to be disabled first (`stty -ixon`).
