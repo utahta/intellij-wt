@@ -64,3 +64,24 @@ func TestScanIwtRootMissing(t *testing.T) {
 		t.Errorf("scanIwtRoot(missing) = %v, want empty", got)
 	}
 }
+
+func TestResolveRootGitDir(t *testing.T) {
+	tmp := t.TempDir()
+	repo := mkdirAll(t, tmp, "repo")
+	mkdirAll(t, repo, ".git")
+
+	got := resolveRoot(repo)
+	want, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Errorf("resolveRoot(%q) = %q, want %q", repo, got, want)
+	}
+}
+
+func TestResolveRootNonRepo(t *testing.T) {
+	if got := resolveRoot(t.TempDir()); got != "" {
+		t.Errorf("resolveRoot(non-repo) = %q, want \"\"", got)
+	}
+}

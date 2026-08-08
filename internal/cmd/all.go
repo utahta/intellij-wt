@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/utahta/intellij-wt/internal/git"
 )
@@ -53,11 +54,15 @@ func allWorktrees() ([]git.Worktree, []string, error) {
 		}
 	}
 
+	resolved := make([]string, len(candidates))
+	runParallel(len(candidates), func(i int) {
+		resolved[i] = resolveRoot(candidates[i])
+	})
+
 	seen := make(map[string]bool)
 	var roots []string
-	for _, c := range candidates {
-		root, err := git.MainRoot(c)
-		if err != nil || seen[root] {
+	for _, root := range resolved {
+		if root == "" || seen[root] {
 			continue
 		}
 		seen[root] = true
@@ -65,27 +70,75 @@ func allWorktrees() ([]git.Worktree, []string, error) {
 	}
 	sort.Strings(roots)
 
-	var wts []git.Worktree
-	var labels []string
-	for _, root := range roots {
-		ws, err := git.Worktrees(root)
+	type repoList struct {
+		wts    []git.Worktree
+		prefix string
+	}
+	lists := make([]repoList, len(roots))
+	runParallel(len(roots), func(i int) {
+		ws, err := git.Worktrees(roots[i])
 		if err != nil {
-			continue
+			return
 		}
-		org := git.OriginOwner(root)
+		org := git.OriginOwner(roots[i])
 		if org == "" {
 			org = "_local"
 		}
-		prefix := org + "/" + filepath.Base(root)
-		for _, w := range ws {
+		lists[i] = repoList{wts: ws, prefix: org + "/" + filepath.Base(roots[i])}
+	})
+
+	var wts []git.Worktree
+	var labels []string
+	for _, l := range lists {
+		for _, w := range l.wts {
 			wts = append(wts, w)
-			labels = append(labels, prefix+"  "+worktreeLabel(w))
+			labels = append(labels, l.prefix+"  "+worktreeLabel(w))
 		}
 	}
 	if len(wts) == 0 {
 		return nil, nil, fmt.Errorf("no repositories found under the worktree root or $IWT_SEARCH_PATH")
 	}
 	return wts, labels, nil
+}
+
+// resolveRoot returns the main worktree root for a candidate directory, or
+// "" when it has none. A candidate whose .git entry is a directory is its
+// own main root, so the git call is skipped; a .git file (linked worktree)
+// still resolves through git.
+func resolveRoot(dir string) string {
+	if fi, err := os.Stat(filepath.Join(dir, ".git")); err == nil && fi.IsDir() {
+		abs, err := filepath.Abs(dir)
+		if err != nil {
+			return ""
+		}
+		if r, err := filepath.EvalSymlinks(abs); err == nil {
+			abs = r
+		}
+		return abs
+	}
+	root, err := git.MainRoot(dir)
+	if err != nil {
+		return ""
+	}
+	return root
+}
+
+// scanParallelism bounds concurrent git invocations during discovery.
+const scanParallelism = 16
+
+func runParallel(n int, fn func(i int)) {
+	sem := make(chan struct{}, scanParallelism)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			fn(i)
+		}()
+	}
+	wg.Wait()
 }
 
 // scanIwtRoot returns the worktree directories under the shared root's
