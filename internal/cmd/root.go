@@ -47,11 +47,22 @@ func worktreePath(root, branch string) (string, error) {
 func selectFrom(wts []git.Worktree, labels []string, header string) (git.Worktree, error) {
 	idx, err := fuzzyfinder.Find(wts, func(i int) string {
 		return labels[i]
-	}, fuzzyfinder.WithHeader(header))
+	}, fuzzyfinder.WithHeader(header), previewPath(wts))
 	if err != nil {
 		return git.Worktree{}, err
 	}
 	return wts[idx], nil
+}
+
+// previewPath shows the highlighted worktree's path in a preview window,
+// keeping it out of the label so fuzzy matching only sees org/repo/branch.
+func previewPath(wts []git.Worktree) fuzzyfinder.Option {
+	return fuzzyfinder.WithPreviewWindow(func(i, _, _ int) string {
+		if i < 0 {
+			return ""
+		}
+		return wts[i].Path
+	})
 }
 
 func defaultLabels(wts []git.Worktree) []string {
@@ -65,7 +76,7 @@ func defaultLabels(wts []git.Worktree) []string {
 func selectWorktrees(wts []git.Worktree, header string) ([]git.Worktree, error) {
 	idxs, err := fuzzyfinder.FindMulti(wts, func(i int) string {
 		return worktreeLabel(wts[i])
-	}, fuzzyfinder.WithHeader(header))
+	}, fuzzyfinder.WithHeader(header), previewPath(wts))
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +95,7 @@ func worktreeLabel(w git.Worktree) string {
 	if w.Main {
 		label += " (main)"
 	}
-	return label + "  " + w.Path
+	return label
 }
 
 func confirm(msg string) bool {
