@@ -51,11 +51,11 @@ func runOpen(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	} else {
-		wts, labels, err := gatherWorktrees(openAll)
+		entries, err := gatherWorktrees(openAll)
 		if err != nil {
 			return err
 		}
-		wt, err = selectFrom(wts, labels, "open in IntelliJ IDEA")
+		wt, err = selectEntry(entries, "open in IntelliJ IDEA")
 		if err != nil {
 			return err
 		}

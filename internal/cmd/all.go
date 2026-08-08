@@ -23,17 +23,36 @@ func iwtRoot() (string, error) {
 	return filepath.Join(home, ".intellij-wt", "worktrees"), nil
 }
 
+// worktreeEntry couples a worktree with its repository label. Repo is
+// "org/repo" in cross-repository listings and empty in single-repository
+// mode, where a shared prefix would only add fuzzy-match noise.
+type worktreeEntry struct {
+	git.Worktree
+	Repo string
+}
+
+func entryLabel(e worktreeEntry) string {
+	if e.Repo != "" {
+		return e.Repo + "  " + worktreeLabel(e.Worktree)
+	}
+	return worktreeLabel(e.Worktree)
+}
+
 // gatherWorktrees returns the current repository's worktrees, or — when all
 // is true or the working directory is outside a repository — those of every
 // discovered repository.
-func gatherWorktrees(all bool) ([]git.Worktree, []string, error) {
+func gatherWorktrees(all bool) ([]worktreeEntry, error) {
 	if !all {
 		if root, err := git.MainRoot("."); err == nil {
 			wts, err := git.Worktrees(root)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
-			return wts, defaultLabels(wts), nil
+			entries := make([]worktreeEntry, len(wts))
+			for i, w := range wts {
+				entries[i] = worktreeEntry{Worktree: w}
+			}
+			return entries, nil
 		}
 	}
 	return allWorktrees()
@@ -43,7 +62,7 @@ func gatherWorktrees(all bool) ([]git.Worktree, []string, error) {
 // the shared worktree root and $IWT_SEARCH_PATH, labeled with org/repo.
 // The current repository (when inside one) is always included, keeping the
 // list a superset of the default single-repository selection.
-func allWorktrees() ([]git.Worktree, []string, error) {
+func allWorktrees() ([]worktreeEntry, error) {
 	candidates := []string{"."}
 	if root, err := iwtRoot(); err == nil {
 		candidates = append(candidates, scanIwtRoot(root)...)
@@ -87,18 +106,16 @@ func allWorktrees() ([]git.Worktree, []string, error) {
 		lists[i] = repoList{wts: ws, prefix: org + "/" + filepath.Base(roots[i])}
 	})
 
-	var wts []git.Worktree
-	var labels []string
+	var entries []worktreeEntry
 	for _, l := range lists {
 		for _, w := range l.wts {
-			wts = append(wts, w)
-			labels = append(labels, l.prefix+"  "+worktreeLabel(w))
+			entries = append(entries, worktreeEntry{Worktree: w, Repo: l.prefix})
 		}
 	}
-	if len(wts) == 0 {
-		return nil, nil, fmt.Errorf("no repositories found under the worktree root or $IWT_SEARCH_PATH")
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("no repositories found under the worktree root or $IWT_SEARCH_PATH")
 	}
-	return wts, labels, nil
+	return entries, nil
 }
 
 // resolveRoot returns the main worktree root for a candidate directory, or

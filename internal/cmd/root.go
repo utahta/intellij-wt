@@ -44,39 +44,31 @@ func worktreePath(root, branch string) (string, error) {
 	return filepath.Join(base, org, name, name+"--"+strings.ReplaceAll(branch, "/", "-")), nil
 }
 
-func selectFrom(wts []git.Worktree, labels []string, header string) (git.Worktree, error) {
-	idx, err := fuzzyfinder.Find(wts, func(i int) string {
-		return labels[i]
-	}, fuzzyfinder.WithHeader(header), previewPath(wts))
+func selectEntry(entries []worktreeEntry, header string) (git.Worktree, error) {
+	idx, err := fuzzyfinder.Find(entries, func(i int) string {
+		return entryLabel(entries[i])
+	}, fuzzyfinder.WithHeader(header), previewPath(func(i int) string { return entries[i].Path }))
 	if err != nil {
 		return git.Worktree{}, err
 	}
-	return wts[idx], nil
+	return entries[idx].Worktree, nil
 }
 
 // previewPath shows the highlighted worktree's path in a preview window,
 // keeping it out of the label so fuzzy matching only sees org/repo/branch.
-func previewPath(wts []git.Worktree) fuzzyfinder.Option {
+func previewPath(path func(i int) string) fuzzyfinder.Option {
 	return fuzzyfinder.WithPreviewWindow(func(i, _, _ int) string {
 		if i < 0 {
 			return ""
 		}
-		return wts[i].Path
+		return path(i)
 	})
-}
-
-func defaultLabels(wts []git.Worktree) []string {
-	labels := make([]string, len(wts))
-	for i, w := range wts {
-		labels[i] = worktreeLabel(w)
-	}
-	return labels
 }
 
 func selectWorktrees(wts []git.Worktree, header string) ([]git.Worktree, error) {
 	idxs, err := fuzzyfinder.FindMulti(wts, func(i int) string {
 		return worktreeLabel(wts[i])
-	}, fuzzyfinder.WithHeader(header), previewPath(wts))
+	}, fuzzyfinder.WithHeader(header), previewPath(func(i int) string { return wts[i].Path }))
 	if err != nil {
 		return nil, err
 	}

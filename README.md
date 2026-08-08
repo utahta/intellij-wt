@@ -38,6 +38,8 @@ iwt open [branch|path]   Open/raise a worktree in IDEA: by branch name of the
                          fuzzy-selected when no argument is given. --all selects
                          across every discovered repository.
 iwt list                 List worktrees with dirty state and last commit time.
+                         --all lists every discovered repository; --porcelain
+                         prints org/repo<TAB>branch<TAB>path for scripts.
 iwt prune                Select worktrees to remove (Tab to multi-select).
                          --merged removes all worktrees whose branch is merged
                          into origin's default branch, without prompting.
@@ -147,6 +149,27 @@ in the same session don't re-trigger it, and exiting the command drops
 you back to the shell. The result: `iwt add <branch>` opens IDEA on a new
 worktree with a terminal attached to its own tmux session and the agent
 already running.
+
+### Bind a key to cross-repository open
+
+`iwt list --all --porcelain` plugs into fzf for a prompt-inline picker
+that keeps your usual fzf look, here bound to Ctrl+O (Ctrl+I is
+indistinguishable from Tab in terminals, so avoid it):
+
+```zsh
+function iwt-open-widget() {
+  local p
+  p=$(iwt list --all --porcelain |
+    fzf --height 50% --reverse --delimiter '\t' --with-nth 1,2 |
+    cut -f3) && iwt open "$p" >/dev/null
+  zle reset-prompt
+}
+zle -N iwt-open-widget
+bindkey '^O' iwt-open-widget
+```
+
+`--with-nth 1,2` shows (and matches) only org/repo and branch while the
+hidden third field carries the path to `iwt open`.
 
 ### Fix misplaced IME preedit text in the IDE terminal
 

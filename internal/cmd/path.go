@@ -32,11 +32,11 @@ func init() {
 }
 
 func runPath(cmd *cobra.Command, args []string) error {
-	wts, labels, err := gatherWorktrees(pathAll)
+	entries, err := gatherWorktrees(pathAll)
 	if err != nil {
 		return err
 	}
-	wt, err := selectFrom(wts, labels, "print worktree path")
+	wt, err := selectEntry(entries, "print worktree path")
 	if err != nil {
 		return err
 	}
