@@ -11,6 +11,7 @@ import (
 
 	"github.com/ktr0731/go-fuzzyfinder"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/utahta/intellij-wt/internal/git"
 	"github.com/utahta/intellij-wt/internal/picker"
@@ -110,9 +111,32 @@ func worktreeLabel(w git.Worktree) string {
 	return label
 }
 
+// confirm asks a yes/no question. On a terminal it reads a single key
+// from /dev/tty in raw mode and echoes it itself, so the answer is
+// visible regardless of the surrounding terminal state (e.g. inside a
+// zle widget, where echo is off). With piped stdin it reads a line, for
+// scripts and tests.
 func confirm(msg string) bool {
 	fmt.Fprintf(os.Stderr, "%s [y/N]: ", paint("1;33", msg))
-	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-	line = strings.TrimSpace(line)
-	return line == "y" || line == "Y"
+
+	if fi, err := os.Stdin.Stat(); err == nil && fi.Mode()&os.ModeCharDevice == 0 {
+		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+		line = strings.TrimSpace(line)
+		return line == "y" || line == "Y"
+	}
+
+	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err != nil {
+		return false
+	}
+	defer tty.Close()
+	old, err := term.MakeRaw(int(tty.Fd()))
+	if err != nil {
+		return false
+	}
+	var buf [1]byte
+	_, _ = tty.Read(buf[:])
+	_ = term.Restore(int(tty.Fd()), old)
+	fmt.Fprintf(os.Stderr, "%c\n", buf[0])
+	return buf[0] == 'y' || buf[0] == 'Y'
 }

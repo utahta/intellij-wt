@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -161,6 +162,36 @@ func DefaultBranch(dir string) string {
 func BranchExists(dir, branch string) bool {
 	_, err := run(dir, "show-ref", "--verify", "refs/heads/"+branch)
 	return err == nil
+}
+
+// Branches returns local and remote branch names (remote prefix stripped),
+// deduplicated and sorted, excluding HEAD pointers.
+func Branches(dir string) []string {
+	seen := make(map[string]bool)
+	var names []string
+	add := func(name string) {
+		if name == "" || name == "HEAD" || seen[name] {
+			return
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+	if out, err := run(dir, "branch", "--format=%(refname:short)"); err == nil && out != "" {
+		for _, l := range strings.Split(out, "\n") {
+			add(strings.TrimSpace(l))
+		}
+	}
+	if out, err := run(dir, "branch", "-r", "--format=%(refname:short)"); err == nil && out != "" {
+		for _, l := range strings.Split(out, "\n") {
+			// origin/HEAD shortens to a bare remote name; only lines
+			// with a remote prefix are branches.
+			if _, name, ok := strings.Cut(strings.TrimSpace(l), "/"); ok {
+				add(name)
+			}
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 // AddWorktree checks out an existing branch into a new worktree at path.

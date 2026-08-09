@@ -44,29 +44,14 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	path, err := worktreePath(root, branch)
+	base := ""
+	if len(args) == 2 {
+		base = args[1]
+	}
+	path, err := createWorktree(root, branch, base)
 	if err != nil {
 		return err
 	}
-	if git.BranchExists(root, branch) {
-		err = git.AddWorktree(root, path, branch)
-	} else {
-		base := ""
-		if len(args) == 2 {
-			base = args[1]
-		} else {
-			base = git.DefaultBranch(root)
-		}
-		if base == "" {
-			base = "HEAD"
-		}
-		err = git.AddWorktreeNewBranch(root, path, branch, base)
-	}
-	if err != nil {
-		return err
-	}
-
-	allowDirenv(path)
 
 	if !addNoOpen {
 		if err := idea.Open(path); err != nil {
@@ -75,6 +60,32 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println(path)
 	return nil
+}
+
+// createWorktree creates a worktree for branch in the repository at root
+// and returns its path. An existing branch is checked out as is; a new one
+// is created off base (or origin's default branch, falling back to HEAD).
+func createWorktree(root, branch, base string) (string, error) {
+	path, err := worktreePath(root, branch)
+	if err != nil {
+		return "", err
+	}
+	if git.BranchExists(root, branch) {
+		err = git.AddWorktree(root, path, branch)
+	} else {
+		if base == "" {
+			base = git.DefaultBranch(root)
+		}
+		if base == "" {
+			base = "HEAD"
+		}
+		err = git.AddWorktreeNewBranch(root, path, branch, base)
+	}
+	if err != nil {
+		return "", err
+	}
+	allowDirenv(path)
+	return path, nil
 }
 
 // allowDirenv pre-approves .envrc files in the new worktree (root and one

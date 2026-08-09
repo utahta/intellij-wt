@@ -69,30 +69,40 @@ func runPrune(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	defaultBranch := git.DefaultBranch(root)
-
-	var selected []git.Worktree
 	if pruneMerged {
-		if defaultBranch == "" {
-			return fmt.Errorf("--merged requires origin's default branch (run: git remote set-head origin --auto)")
-		}
-		for _, w := range wts {
-			if w.Branch != "" && w.Branch != defaultBranch && git.IsMerged(root, w.Branch, defaultBranch) {
-				selected = append(selected, w)
-			}
-		}
-		if len(selected) == 0 {
-			fmt.Fprintln(os.Stderr, paint("33", "no merged worktrees"))
-			return git.PruneWorktrees(root)
-		}
-	} else {
-		selected, err = selectWorktrees(wts, "remove worktrees (Tab to multi-select)")
-		if err != nil {
-			return err
-		}
+		return pruneMergedWorktrees(root)
 	}
 
-	removeWorktrees(root, selected)
+	selected, err := selectWorktrees(wts, "remove worktrees (Tab to multi-select)")
+	if err != nil {
+		return err
+	}
+	removeWorktrees(root, selected, false)
+	return git.PruneWorktrees(root)
+}
+
+// pruneMergedWorktrees removes every worktree of root whose branch is
+// merged into origin's default branch, without prompting.
+func pruneMergedWorktrees(root string) error {
+	all, err := git.Worktrees(root)
+	if err != nil {
+		return err
+	}
+	defaultBranch := git.DefaultBranch(root)
+	if defaultBranch == "" {
+		return fmt.Errorf("pruning merged worktrees requires origin's default branch (run: git remote set-head origin --auto)")
+	}
+	var selected []git.Worktree
+	for _, w := range all {
+		if !w.Main && w.Branch != "" && w.Branch != defaultBranch && git.IsMerged(root, w.Branch, defaultBranch) {
+			selected = append(selected, w)
+		}
+	}
+	if len(selected) == 0 {
+		fmt.Fprintln(os.Stderr, paint("33", "no merged worktrees"))
+		return git.PruneWorktrees(root)
+	}
+	removeWorktrees(root, selected, true)
 	return git.PruneWorktrees(root)
 }
 
@@ -110,20 +120,21 @@ func pruneTarget(target string) error {
 	if err != nil {
 		return err
 	}
-	removeWorktrees(root, []git.Worktree{wt})
+	removeWorktrees(root, []git.Worktree{wt}, false)
 	return git.PruneWorktrees(root)
 }
 
 // removeWorktrees removes the given worktrees of root: dirty ones need
 // confirmation (or --force), and fully merged branches are deleted after
-// a confirmation (automatically in --merged mode). Failures are reported
-// and skipped.
-func removeWorktrees(root string, wts []git.Worktree) {
+// a confirmation. In merged mode (a bulk removal of merged worktrees)
+// nothing prompts: dirty worktrees are skipped and merged branches are
+// deleted. Failures are reported and skipped.
+func removeWorktrees(root string, wts []git.Worktree, merged bool) {
 	defaultBranch := git.DefaultBranch(root)
 	for _, w := range wts {
 		force := pruneForce
 		if !force && git.IsDirty(w.Path) {
-			if pruneMerged {
+			if merged {
 				fmt.Fprintln(os.Stderr, paint("33", "skipped (dirty): "+w.Path))
 				continue
 			}
@@ -150,8 +161,8 @@ func removeWorktrees(root string, wts []git.Worktree) {
 		del := false
 		switch {
 		case defaultBranch != "" && git.IsMerged(root, w.Branch, defaultBranch):
-			del = pruneMerged || confirm(fmt.Sprintf("branch %q is merged into %s. Delete it?", w.Branch, defaultBranch))
-		case defaultBranch == "" && !pruneMerged:
+			del = merged || confirm(fmt.Sprintf("branch %q is merged into %s. Delete it?", w.Branch, defaultBranch))
+		case defaultBranch == "" && !merged:
 			del = confirm(fmt.Sprintf("branch %q: cannot tell whether it is merged (origin's default branch is unset). Delete it anyway?", w.Branch))
 		}
 		if del {
