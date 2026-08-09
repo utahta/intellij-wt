@@ -70,6 +70,43 @@ func TestConfigOriginURLNoOrigin(t *testing.T) {
 	}
 }
 
+func TestCandidateBranches(t *testing.T) {
+	dir := t.TempDir()
+	origin := filepath.Join(dir, "origin")
+	repo := filepath.Join(dir, "repo")
+	mustGit := func(d string, args ...string) {
+		t.Helper()
+		if _, err := run(d, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustGit(dir, "init", "-q", "-b", "main", origin)
+	mustGit(origin, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "init")
+	mustGit(origin, "branch", "remote-only")
+	mustGit(dir, "clone", "-q", origin, repo)
+	mustGit(repo, "branch", "free")
+	mustGit(repo, "worktree", "add", "-q", "-b", "attached", filepath.Join(dir, "wt"))
+
+	got := CandidateBranches(repo)
+	// main is checked out in the main worktree and "attached" in a linked
+	// one: both excluded. "free" (unattached local) comes before the
+	// remote-only branch.
+	want := []Branch{
+		{Name: "free"},
+		{Name: "remote-only", Ref: "origin/remote-only"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("CandidateBranches() = %+v, want %+v", got, want)
+	}
+
+	if ref := RemoteBranchRef(repo, "remote-only"); ref != "origin/remote-only" {
+		t.Errorf("RemoteBranchRef(remote-only) = %q", ref)
+	}
+	if ref := RemoteBranchRef(repo, "free"); ref != "" {
+		t.Errorf("RemoteBranchRef(free) = %q, want \"\"", ref)
+	}
+}
+
 func TestOwnerFromURL(t *testing.T) {
 	tests := []struct {
 		url  string

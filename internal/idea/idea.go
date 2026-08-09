@@ -23,6 +23,7 @@ func Open(path string) error {
 			// Don't wait: with no running instance the launcher stays
 			// attached to the IDE process it starts.
 			go func() { _ = cmd.Wait() }()
+			activate()
 			return nil
 		}
 	}
@@ -30,6 +31,17 @@ func Open(path string) error {
 		return exec.Command("open", "-a", appName, path).Run()
 	}
 	return fmt.Errorf("no IntelliJ IDEA launcher found: install the idea command-line launcher or set IWT_IDEA_BIN")
+}
+
+// activate raises the IDE application itself. Opening a project does not
+// always bring it forward — a modal dialog (e.g. the project trust
+// prompt) can leave IDEA hidden behind the terminal, looking like
+// nothing happened. Best-effort.
+func activate() {
+	if runtime.GOOS != "darwin" {
+		return
+	}
+	_ = exec.Command("open", "-a", appName).Run()
 }
 
 // findLauncher locates the "idea" command-line launcher, in order:

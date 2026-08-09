@@ -23,9 +23,11 @@ Worktrees live under a shared root (default ~/.intellij-wt/worktrees,
 overridable with IWT_ROOT), organized as <org>/<repo>/<repo>--<branch>.
 The org comes from the origin remote URL ("_local" when there is none).
 
-An existing branch is checked out as is. A new branch is created off [base]
-(default: origin's default branch, falling back to HEAD). Any .envrc found
-directly under the worktree or one level below is direnv-allowed.
+An existing branch is checked out as is; a branch that only exists on
+origin is checked out tracking it. Otherwise a new branch is created off
+[base] (default: origin's default branch, falling back to HEAD). Any
+.envrc found directly under the worktree or one level below is
+direnv-allowed.
 
 The created worktree path is printed to stdout.`,
 	Args: cobra.RangeArgs(1, 2),
@@ -63,7 +65,8 @@ func runAdd(cmd *cobra.Command, args []string) error {
 }
 
 // createWorktree creates a worktree for branch in the repository at root
-// and returns its path. An existing branch is checked out as is; a new one
+// and returns its path. An existing branch is checked out as is; a branch
+// existing on origin is checked out tracking it; otherwise a new branch
 // is created off base (or origin's default branch, falling back to HEAD).
 func createWorktree(root, branch, base string) (string, error) {
 	path, err := worktreePath(root, branch)
@@ -72,6 +75,8 @@ func createWorktree(root, branch, base string) (string, error) {
 	}
 	if git.BranchExists(root, branch) {
 		err = git.AddWorktree(root, path, branch)
+	} else if ref := git.RemoteBranchRef(root, branch); base == "" && ref != "" {
+		err = git.AddWorktreeTrack(root, path, branch, ref)
 	} else {
 		if base == "" {
 			base = git.DefaultBranch(root)
@@ -85,6 +90,7 @@ func createWorktree(root, branch, base string) (string, error) {
 		return "", err
 	}
 	allowDirenv(path)
+	fmt.Fprintln(os.Stderr, paint("1;32", "created: "+path))
 	return path, nil
 }
 

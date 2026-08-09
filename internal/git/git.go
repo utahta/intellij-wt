@@ -164,45 +164,78 @@ func BranchExists(dir, branch string) bool {
 	return err == nil
 }
 
-// Branches returns local and remote branch names (remote prefix stripped),
-// deduplicated and sorted, excluding HEAD pointers.
-func Branches(dir string) []string {
+// Branch is a candidate for a new worktree: a local branch not attached
+// to any worktree, or a remote-only branch (Ref then holds the remote
+// ref, e.g. "origin/feat").
+type Branch struct {
+	Name string
+	Ref  string
+}
+
+// CandidateBranches returns the branches a new worktree could check out:
+// unattached local branches first, then remote-only branches. Branches
+// already checked out in a worktree (including the main one) are
+// excluded — adding them would fail anyway.
+func CandidateBranches(dir string) []Branch {
 	seen := make(map[string]bool)
-	var names []string
-	add := func(name string) {
-		if name == "" || name == "HEAD" || seen[name] {
-			return
-		}
-		seen[name] = true
-		names = append(names, name)
-	}
-	if out, err := run(dir, "branch", "--format=%(refname:short)"); err == nil && out != "" {
+	var locals, remotes []Branch
+	if out, err := run(dir, "branch", "--format=%(refname:short)\t%(worktreepath)"); err == nil && out != "" {
 		for _, l := range strings.Split(out, "\n") {
-			add(strings.TrimSpace(l))
+			name, wt, _ := strings.Cut(l, "\t")
+			name = strings.TrimSpace(name)
+			if name == "" || seen[name] {
+				continue
+			}
+			seen[name] = true
+			if strings.TrimSpace(wt) == "" {
+				locals = append(locals, Branch{Name: name})
+			}
 		}
 	}
 	if out, err := run(dir, "branch", "-r", "--format=%(refname:short)"); err == nil && out != "" {
 		for _, l := range strings.Split(out, "\n") {
+			ref := strings.TrimSpace(l)
 			// origin/HEAD shortens to a bare remote name; only lines
 			// with a remote prefix are branches.
-			if _, name, ok := strings.Cut(strings.TrimSpace(l), "/"); ok {
-				add(name)
+			_, name, ok := strings.Cut(ref, "/")
+			if !ok || name == "" || name == "HEAD" || seen[name] {
+				continue
 			}
+			seen[name] = true
+			remotes = append(remotes, Branch{Name: name, Ref: ref})
 		}
 	}
-	sort.Strings(names)
-	return names
+	sort.Slice(locals, func(i, j int) bool { return locals[i].Name < locals[j].Name })
+	sort.Slice(remotes, func(i, j int) bool { return remotes[i].Name < remotes[j].Name })
+	return append(locals, remotes...)
+}
+
+// RemoteBranchRef returns "origin/<branch>" when the branch exists on
+// origin, or "".
+func RemoteBranchRef(dir, branch string) string {
+	if _, err := run(dir, "show-ref", "--verify", "refs/remotes/origin/"+branch); err == nil {
+		return "origin/" + branch
+	}
+	return ""
 }
 
 // AddWorktree checks out an existing branch into a new worktree at path.
+// Quiet: git's feedback quotes arbitrary commit subjects ("HEAD is now at
+// ..."), which reads as if iwt said it; the caller prints its own notice.
 func AddWorktree(dir, path, branch string) error {
-	return runLoud(dir, "worktree", "add", path, branch)
+	return runLoud(dir, "worktree", "add", "--quiet", path, branch)
 }
 
 // AddWorktreeNewBranch creates branch off base and checks it out into a new
-// worktree at path.
+// worktree at path. Quiet for the same reason as AddWorktree.
 func AddWorktreeNewBranch(dir, path, branch, base string) error {
-	return runLoud(dir, "worktree", "add", "-b", branch, path, base)
+	return runLoud(dir, "worktree", "add", "--quiet", "-b", branch, path, base)
+}
+
+// AddWorktreeTrack creates branch tracking the remote ref and checks it
+// out into a new worktree at path.
+func AddWorktreeTrack(dir, path, branch, remoteRef string) error {
+	return runLoud(dir, "worktree", "add", "--quiet", "--track", "-b", branch, path, remoteRef)
 }
 
 func RemoveWorktree(dir, path string, force bool) error {

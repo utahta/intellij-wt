@@ -179,13 +179,18 @@ func repoItems() ([]picker.Item, error) {
 	return items, nil
 }
 
-// pickBranch shows the new-worktree input box: pick an existing local or
-// remote branch, or type a new name.
+// pickBranch shows the new-worktree input box: pick an unattached local
+// or remote-only branch, or type a new name. The detail column tells the
+// two apart.
 func pickBranch(repo string) (string, error) {
-	branches := git.Branches(repo)
+	branches := git.CandidateBranches(repo)
 	items := make([]picker.Item, len(branches))
 	for i, b := range branches {
-		items[i] = picker.Item{Label: b}
+		detail := "local"
+		if b.Ref != "" {
+			detail = b.Ref
+		}
+		items[i] = picker.Item{Label: b.Name, Detail: detail}
 	}
 	res, err := picker.Run(items, picker.Options{
 		Prompt: "new branch> ",

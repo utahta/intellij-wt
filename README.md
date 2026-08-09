@@ -142,6 +142,15 @@ the default (Window → Layouts, IDEA 2023.1+). Worktree projects created
 by `iwt add` then show a terminal on their first open; reopened projects
 restore whatever layout they were closed with.
 
+### Skip the trust dialog for new worktrees
+
+Every worktree is a new project directory to IDEA, so the "Trust and
+Open Project" dialog appears on each first open. Add the shared worktree
+root (`~/.intellij-wt/worktrees`) to the IDE's Trusted Locations
+(search for "trusted" in Settings) to silence it for all worktrees; the
+dialog's "Trust all projects in ... folder" checkbox is the per-repo
+equivalent.
+
 ### Fix misplaced IME preedit text in the IDE terminal
 
 With the "Reworked" terminal engine, composing Japanese (or other IME)
