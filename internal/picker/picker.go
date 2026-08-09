@@ -54,14 +54,20 @@ type Options struct {
 	// Expect lists key names (e.g. "tab", "ctrl+n") that accept the
 	// current state and return, like fzf --expect.
 	Expect []string
+	// Multi lets Tab toggle marks on rows; Result.Items then carries
+	// the marked items (or the highlighted one when nothing is marked).
+	// Multi and an Expect entry for "tab" are mutually exclusive.
+	Multi bool
 }
 
 // Result is what a picker run returns: the accepting key ("" for enter),
 // the highlighted item (nil when nothing matched), and the query as typed
-// — callers implementing an input box use Query when Item is nil.
+// — callers implementing an input box use Query when Item is nil. Items
+// is populated in Multi mode.
 type Result struct {
 	Key   string
 	Item  *Item
+	Items []Item
 	Query string
 }
 
@@ -92,6 +98,8 @@ func Run(items []Item, opts Options) (Result, error) {
 		items:       items,
 		labelW:      labelW,
 		expect:      expect,
+		multi:       opts.Multi,
+		marked:      make(map[int]bool),
 		choice:      -1,
 	}
 	m.filter()
@@ -108,6 +116,17 @@ func Run(items []Item, opts Options) (Result, error) {
 	r := Result{Key: final.key, Query: final.query}
 	if final.choice >= 0 {
 		r.Item = &final.items[final.choice]
+	}
+	if opts.Multi {
+		if len(final.marked) > 0 {
+			for i := range final.items {
+				if final.marked[i] {
+					r.Items = append(r.Items, final.items[i])
+				}
+			}
+		} else if r.Item != nil {
+			r.Items = []Item{*r.Item}
+		}
 	}
 	return r, nil
 }
@@ -126,6 +145,9 @@ type model struct {
 	items       []Item
 	labelW      int
 	expect      map[string]bool
+
+	multi  bool
+	marked map[int]bool
 
 	query  string
 	rows   []row
@@ -177,6 +199,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "enter":
 			return m.accept("")
+		case "tab":
+			if m.multi && len(m.rows) > 0 {
+				it := m.rows[m.cursor].item
+				if m.marked[it] {
+					delete(m.marked, it)
+				} else {
+					m.marked[it] = true
+				}
+				if m.cursor < len(m.rows)-1 {
+					m.cursor++
+				}
+			}
 		case "up", "ctrl+p", "ctrl+k":
 			if m.cursor > 0 {
 				m.cursor--
@@ -255,6 +289,7 @@ const (
 	sgrChip    = "\x1b[48;5;238m\x1b[38;5;253m"
 	sgrRule    = "\x1b[38;5;240m"
 	sgrCount   = "\x1b[38;5;178m"
+	sgrMark    = "\x1b[1;33m"
 )
 
 func dim(s string) string { return sgrDim + s + sgrReset }
@@ -305,6 +340,9 @@ func (m model) View() tea.View {
 	// the results: a rule fills the remaining width, like fzf. The rule
 	// gets a medium gray instead of dim, which sinks into dark themes.
 	counter := fmt.Sprintf("  %d/%d ", len(m.rows), len(m.items))
+	if m.multi && len(m.marked) > 0 {
+		counter = fmt.Sprintf("  %d/%d (%d) ", len(m.rows), len(m.items), len(m.marked))
+	}
 	b.WriteString(sgrCount + counter + sgrReset)
 	if w := m.width - runewidth.StringWidth(counter) - 1; w > 0 {
 		b.WriteString(sgrRule + strings.Repeat("─", w) + sgrReset)
@@ -312,6 +350,10 @@ func (m model) View() tea.View {
 	b.WriteString("\n")
 	if m.header != "" {
 		b.WriteString(m.header + "\n")
+	}
+	markW := 0
+	if m.multi {
+		markW = 2
 	}
 	h := m.listHeight()
 	for i := m.offset; i < m.offset+h && i < len(m.rows); i++ {
@@ -321,10 +363,17 @@ func (m model) View() tea.View {
 		if i == m.cursor {
 			ptr = sgrPointer + "> " + sgrReset
 		}
+		if m.multi {
+			if m.marked[r.item] {
+				ptr += sgrMark + "* " + sgrReset
+			} else {
+				ptr += "  "
+			}
+		}
 		pad := strings.Repeat(" ", m.labelW-runewidth.StringWidth(it.Label))
 		line := ptr + renderLabel(it.Label, r.matched, i == m.cursor) + pad
 		if it.Detail != "" {
-			line += "  " + dim(truncate(it.Detail, m.width-2-m.labelW-2))
+			line += "  " + dim(truncate(it.Detail, m.width-2-markW-m.labelW-2))
 		}
 		b.WriteString(line + "\n")
 	}

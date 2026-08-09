@@ -73,7 +73,7 @@ func runPrune(cmd *cobra.Command, args []string) error {
 		return pruneMergedWorktrees(root)
 	}
 
-	selected, err := selectWorktrees(wts, "remove worktrees (Tab to multi-select)")
+	selected, err := selectWorktrees(wts, "remove selected")
 	if err != nil {
 		return err
 	}

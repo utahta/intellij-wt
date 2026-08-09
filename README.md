@@ -16,14 +16,6 @@ command-line launcher (untested).
 go install github.com/utahta/intellij-wt/cmd/iwt@latest
 ```
 
-The shell widgets — the heart of the workflow (see Shell integration
-below) — need [fzf](https://github.com/junegunn/fzf); every iwt command
-works without it, through a built-in finder.
-
-```bash
-brew install fzf
-```
-
 Opening and raising project windows uses the `idea` command-line launcher,
 looked up in this order:
 
@@ -58,6 +50,7 @@ iwt prune [target]       Select worktrees to remove (Tab to multi-select), or
                          into origin's default branch, without prompting.
 iwt path                 Select a worktree and print its path (for cd wrappers).
                          --all selects across every discovered repository.
+iwt pick --open|--cd     Staged repository/worktree picker (backs the widgets).
 iwt init zsh             Print zsh integration (Ctrl+O / Ctrl+G pickers,
                          optional tmux glue — see Shell integration below).
 ```
@@ -113,14 +106,13 @@ This provides:
 - A **Ctrl+G widget** with the same staged navigation that cd's into
   the selection instead (navigation only).
 
-Both widgets pipe `iwt list --porcelain` into fzf, so they follow your
-usual fzf look and keybindings (and are skipped when fzf is absent —
-see `iwt path --help` for a DIY cd function). Paths are shown dimmed to
-tell same-named repositories apart, but stay out of fuzzy matching so
-queries only hit org/repo and branch names. Override the keys by
-setting `IWT_OPEN_KEY` / `IWT_CD_KEY` before the eval line — but not
-Ctrl+I, which is indistinguishable from Tab in terminals; Ctrl+S also
-requires terminal flow control to be disabled first (`stty -ixon`).
+Both widgets run `iwt pick`, the built-in inline picker — no external
+dependencies. Paths are shown dimmed to tell same-named repositories
+apart, but stay out of fuzzy matching, so queries only hit org/repo and
+branch names. Override the keys by setting `IWT_OPEN_KEY` /
+`IWT_CD_KEY` before the eval line — but not Ctrl+I, which is
+indistinguishable from Tab in terminals; Ctrl+S also requires terminal
+flow control to be disabled first (`stty -ixon`).
 
 With `--idea-tmux`, IDEA's built-in terminal (detected via
 `TERMINAL_EMULATOR=JetBrains-JediTerm`) attaches to a tmux session named

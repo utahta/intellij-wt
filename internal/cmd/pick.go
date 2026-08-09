@@ -17,16 +17,20 @@ var (
 	pickCd   bool
 )
 
-// pickCmd is the staged picker built on the inline picker: repositories,
-// then Tab into one repository's worktrees, with worktree creation and
-// removal in open mode. It will replace the fzf widgets; hidden while
-// experimental.
 var pickCmd = &cobra.Command{
-	Use:    "pick",
-	Short:  "Staged repository/worktree picker (built-in inline UI)",
-	Hidden: true,
-	Args:   cobra.NoArgs,
-	RunE:   runPick,
+	Use:   "pick (--open | --cd)",
+	Short: "Staged repository/worktree picker (backs the shell widgets)",
+	Long: `Pick through the staged inline picker: repositories first, Tab drills
+into the highlighted repository's worktrees, Esc/Ctrl+H backs out one
+level.
+
+With --open, Enter opens the selection in IDEA, Ctrl+N creates a
+worktree for a picked or typed branch, Ctrl+D removes the highlighted
+worktree, and Ctrl+X prunes merged ones. With --cd, Enter prints the
+selection's path for cd wrappers; the shell widgets from "iwt init zsh"
+are thin bindings over these two modes.`,
+	Args: cobra.NoArgs,
+	RunE: runPick,
 }
 
 func init() {

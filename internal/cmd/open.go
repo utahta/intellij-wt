@@ -55,7 +55,7 @@ func runOpen(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		wt, err = selectEntry(entries, "open in IntelliJ IDEA")
+		wt, err = selectEntry(entries, "open in IDEA")
 		if err != nil {
 			return err
 		}

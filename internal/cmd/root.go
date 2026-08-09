@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ktr0731/go-fuzzyfinder"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
@@ -29,7 +28,7 @@ func Execute() error {
 	err := rootCmd.Execute()
 	// Cancelling a picker is not an error worth reporting; the nonzero
 	// exit still stops && chains in scripts.
-	if err != nil && !errors.Is(err, fuzzyfinder.ErrAbort) && !errors.Is(err, picker.ErrAbort) {
+	if err != nil && !errors.Is(err, picker.ErrAbort) {
 		fmt.Fprintln(os.Stderr, paint("1;31", "iwt: "+err.Error()))
 	}
 	return err
@@ -65,37 +64,54 @@ func worktreePath(root, branch string) (string, error) {
 	return filepath.Join(base, org, name, name+"--"+strings.ReplaceAll(branch, "/", "-")), nil
 }
 
-func selectEntry(entries []worktreeEntry, header string) (git.Worktree, error) {
-	idx, err := fuzzyfinder.Find(entries, func(i int) string {
-		return entryLabel(entries[i])
-	}, fuzzyfinder.WithHeader(header), previewPath(func(i int) string { return entries[i].Path }))
+func selectEntry(entries []worktreeEntry, verb string) (git.Worktree, error) {
+	items := make([]picker.Item, len(entries))
+	for i, e := range entries {
+		items[i] = picker.Item{Label: entryLabel(e), Detail: e.Path}
+	}
+	res, err := picker.Run(items, picker.Options{
+		Prompt: "worktree> ",
+		Keys:   []picker.KeyHint{{Key: "enter", Desc: verb, Tone: picker.TonePrimary}},
+	})
 	if err != nil {
 		return git.Worktree{}, err
 	}
-	return entries[idx].Worktree, nil
-}
-
-// previewPath shows the highlighted worktree's path in a preview window,
-// keeping it out of the label so fuzzy matching only sees org/repo/branch.
-func previewPath(path func(i int) string) fuzzyfinder.Option {
-	return fuzzyfinder.WithPreviewWindow(func(i, _, _ int) string {
-		if i < 0 {
-			return ""
+	if res.Item == nil {
+		return git.Worktree{}, picker.ErrAbort
+	}
+	for _, e := range entries {
+		if e.Path == res.Item.Detail {
+			return e.Worktree, nil
 		}
-		return path(i)
-	})
+	}
+	return git.Worktree{}, picker.ErrAbort
 }
 
-func selectWorktrees(wts []git.Worktree, header string) ([]git.Worktree, error) {
-	idxs, err := fuzzyfinder.FindMulti(wts, func(i int) string {
-		return worktreeLabel(wts[i])
-	}, fuzzyfinder.WithHeader(header), previewPath(func(i int) string { return wts[i].Path }))
+func selectWorktrees(wts []git.Worktree, verb string) ([]git.Worktree, error) {
+	items := make([]picker.Item, len(wts))
+	for i, w := range wts {
+		items[i] = picker.Item{Label: worktreeLabel(w), Detail: w.Path}
+	}
+	res, err := picker.Run(items, picker.Options{
+		Prompt: "prune> ",
+		Multi:  true,
+		Keys: []picker.KeyHint{
+			{Key: "enter", Desc: verb, Tone: picker.ToneDanger},
+			{Key: "tab", Desc: "toggle"},
+		},
+	})
 	if err != nil {
 		return nil, err
 	}
-	selected := make([]git.Worktree, 0, len(idxs))
-	for _, i := range idxs {
-		selected = append(selected, wts[i])
+	byPath := make(map[string]git.Worktree, len(wts))
+	for _, w := range wts {
+		byPath[w.Path] = w
+	}
+	selected := make([]git.Worktree, 0, len(res.Items))
+	for _, it := range res.Items {
+		if w, ok := byPath[it.Detail]; ok {
+			selected = append(selected, w)
+		}
 	}
 	return selected, nil
 }

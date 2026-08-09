@@ -36,7 +36,7 @@ func runPath(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	wt, err := selectEntry(entries, "print worktree path")
+	wt, err := selectEntry(entries, "print path")
 	if err != nil {
 		return err
 	}
