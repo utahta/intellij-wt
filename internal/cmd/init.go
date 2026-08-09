@@ -10,6 +10,7 @@ import (
 var (
 	initIdeaTmux          bool
 	initIdeaTmuxAutostart string
+	initCompletion        bool
 )
 
 var initCmd = &cobra.Command{
@@ -39,6 +40,10 @@ session named after the current worktree, creating it when needed.
 --idea-tmux-autostart <cmd> additionally runs <cmd> once in each freshly
 created session, right before the first prompt (implies --idea-tmux).
 
+--completion also registers the iwt command completion; the eval line
+must then come after compinit in .zshrc (it is skipped silently when
+compinit has not run).
+
 Only zsh is supported.`,
 	Args: cobra.ExactArgs(1),
 	RunE: runInit,
@@ -47,6 +52,7 @@ Only zsh is supported.`,
 func init() {
 	initCmd.Flags().BoolVar(&initIdeaTmux, "idea-tmux", false, "attach IDEA's terminal to a per-worktree tmux session")
 	initCmd.Flags().StringVar(&initIdeaTmuxAutostart, "idea-tmux-autostart", "", "command to run once in freshly created sessions (implies --idea-tmux)")
+	initCmd.Flags().BoolVar(&initCompletion, "completion", false, "also register the iwt command completion (eval after compinit)")
 	rootCmd.AddCommand(initCmd)
 }
 
@@ -63,6 +69,16 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Fprintf(&b, zshIdeaTmux, extra)
 		b.WriteString(zshAutostartReceiver)
+	}
+	if initCompletion {
+		// Embedded rather than eval'ing "iwt completion zsh" to avoid a
+		// second iwt invocation per shell start. compdef only exists
+		// once compinit has run, hence the guard.
+		b.WriteString("\nif (( $+functions[compdef] )); then\n")
+		if err := rootCmd.GenZshCompletion(&b); err != nil {
+			return err
+		}
+		b.WriteString("fi\n")
 	}
 	fmt.Print(b.String())
 	return nil

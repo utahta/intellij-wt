@@ -138,6 +138,9 @@ eval "$(iwt init zsh --idea-tmux-autostart claude)"
 The result: `iwt add <branch>` opens IDEA on a new worktree with a
 terminal attached to its own tmux session and the agent already running.
 
+With `--completion`, the output also registers the iwt command
+completion — place the eval line after `compinit` in that case.
+
 ## Tips
 
 ### Open the Terminal tool window by default
