@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/utahta/intellij-wt/internal/git"
+	"github.com/utahta/intellij-wt/internal/picker"
 )
 
 var rootCmd = &cobra.Command{
@@ -27,7 +28,7 @@ func Execute() error {
 	err := rootCmd.Execute()
 	// Cancelling a picker is not an error worth reporting; the nonzero
 	// exit still stops && chains in scripts.
-	if err != nil && !errors.Is(err, fuzzyfinder.ErrAbort) {
+	if err != nil && !errors.Is(err, fuzzyfinder.ErrAbort) && !errors.Is(err, picker.ErrAbort) {
 		fmt.Fprintln(os.Stderr, paint("1;31", "iwt: "+err.Error()))
 	}
 	return err
