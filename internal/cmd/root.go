@@ -35,12 +35,12 @@ func Execute() error {
 }
 
 // paint wraps s in an ANSI color (SGR code) when stderr is a terminal, so
-// notices stand out between fzf redraws. NO_COLOR disables it.
+// notices stand out between picker redraws. NO_COLOR disables it.
 func paint(code, s string) string {
 	if os.Getenv("NO_COLOR") != "" {
 		return s
 	}
-	if fi, err := os.Stderr.Stat(); err != nil || fi.Mode()&os.ModeCharDevice == 0 {
+	if !term.IsTerminal(int(os.Stderr.Fd())) {
 		return s
 	}
 	return "\033[" + code + "m" + s + "\033[0m"
@@ -119,12 +119,15 @@ func worktreeLabel(w git.Worktree) string {
 // confirm asks a yes/no question. On a terminal it reads a single key
 // from /dev/tty in raw mode and echoes it itself, so the answer is
 // visible regardless of the surrounding terminal state (e.g. inside a
-// zle widget, where echo is off). With piped stdin it reads a line, for
-// scripts and tests.
+// zle widget, where echo is off). Non-terminal stdin (a pipe, a file,
+// /dev/null) reads a line instead, for scripts and tests — EOF answers
+// No. A char-device check would not do here: /dev/null is one, and
+// waiting on /dev/tty would hang automation that redirected stdin
+// precisely to avoid prompts.
 func confirm(msg string) bool {
 	fmt.Fprintf(os.Stderr, "%s [y/N]: ", paint("1;33", msg))
 
-	if fi, err := os.Stdin.Stat(); err == nil && fi.Mode()&os.ModeCharDevice == 0 {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 		line = strings.TrimSpace(line)
 		return line == "y" || line == "Y"
