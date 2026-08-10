@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 const appName = "IntelliJ IDEA"
@@ -23,12 +24,16 @@ func Open(path string) error {
 			// Don't wait: with no running instance the launcher stays
 			// attached to the IDE process it starts.
 			go func() { _ = cmd.Wait() }()
-			activate()
+			activate(launcher)
 			return nil
 		}
 	}
 	if runtime.GOOS == "darwin" {
-		return exec.Command("open", "-a", appName, path).Run()
+		app := os.Getenv("IWT_IDEA_APP")
+		if app == "" {
+			app = appName
+		}
+		return exec.Command("open", "-a", app, path).Run()
 	}
 	return fmt.Errorf("no IntelliJ IDEA launcher found: install the idea command-line launcher or set IWT_IDEA_BIN")
 }
@@ -36,12 +41,45 @@ func Open(path string) error {
 // activate raises the IDE application itself. Opening a project does not
 // always bring it forward — a modal dialog (e.g. the project trust
 // prompt) can leave IDEA hidden behind the terminal, looking like
-// nothing happened. Best-effort.
-func activate() {
+// nothing happened. It targets the app the launcher belongs to: naming
+// an edition instead could raise — or even start — a different one (CE,
+// EAP, Toolbox installs). When no app can be determined the project is
+// open already, so no activation beats a wrong one. Best-effort.
+func activate(launcher string) {
 	if runtime.GOOS != "darwin" {
 		return
 	}
-	_ = exec.Command("open", "-a", appName).Run()
+	if app := activationTarget(launcher); app != "" {
+		_ = exec.Command("open", "-a", app).Run()
+	}
+}
+
+// activationTarget picks the app to activate: $IWT_IDEA_APP names it
+// explicitly (a bundle path or an app name, for script launchers whose
+// bundle iwt does not guess), else the launcher's own bundle, else
+// nothing.
+func activationTarget(launcher string) string {
+	if app := os.Getenv("IWT_IDEA_APP"); app != "" {
+		return app
+	}
+	return appBundle(launcher)
+}
+
+// appBundle locates the app bundle behind the launcher: the launcher
+// itself (symlinks resolved) living inside one. A script launcher gets
+// no guess — shell text cannot be read reliably (string concatenation,
+// conditions, here-docs, …), and a skipped activation is cheap while
+// activating a wrong edition is not.
+func appBundle(launcher string) string {
+	if p, err := filepath.EvalSymlinks(launcher); err == nil {
+		launcher = p
+	}
+	for dir := launcher; len(dir) > 1; dir = filepath.Dir(dir) {
+		if strings.HasSuffix(dir, ".app") {
+			return dir
+		}
+	}
+	return ""
 }
 
 // findLauncher locates the "idea" command-line launcher, in order:

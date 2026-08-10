@@ -29,6 +29,17 @@ Without it, `iwt` falls back to `open -a "IntelliJ IDEA"` on macOS, which
 activates the app but may not raise the right project window; on other
 platforms the launcher is required.
 
+After opening a project, `iwt` also activates the IDE app so it comes to
+the front (a modal dialog can otherwise leave it hidden). The app is
+derived from the launcher path when it lies inside an `.app` bundle; for
+script launchers (e.g. JetBrains Toolbox scripts) no guess is made and
+the activation is skipped. Set `IWT_IDEA_APP` to an app bundle path or
+app name to name the app explicitly:
+
+```bash
+export IWT_IDEA_APP="$HOME/Applications/IntelliJ IDEA Ultimate.app"
+```
+
 ## Usage
 
 ```
