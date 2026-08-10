@@ -87,13 +87,13 @@ stageOne:
 		if err != nil {
 			return err
 		}
-		if res.Item == nil {
+		if res.Index < 0 {
 			return nil
 		}
 		if res.Key == "" {
-			return finish(res.Item.Detail)
+			return finish(items[res.Index].Detail)
 		}
-		repo, label := res.Item.Detail, res.Item.Label
+		repo, label := items[res.Index].Detail, items[res.Index].Label
 
 		for {
 			entries, err := worktreesAt(repo)
@@ -119,27 +119,27 @@ stageOne:
 			case "ctrl+h":
 				continue stageOne
 			case "":
-				if res2.Item == nil {
+				if res2.Index < 0 {
 					return nil
 				}
-				return finish(res2.Item.Detail)
+				return finish(items2[res2.Index].Detail)
 			case "ctrl+n":
-				branch, err := pickBranch(repo)
+				branch, track, err := pickBranch(repo)
 				if errors.Is(err, picker.ErrAbort) || branch == "" {
 					continue
 				}
 				if err != nil {
 					return err
 				}
-				path, err := createWorktree(repo, branch, "")
+				path, err := createWorktree(repo, branch, "", track)
 				if err != nil {
 					fmt.Fprintln(os.Stderr, paint("1;31", "iwt: "+err.Error()))
 					continue
 				}
 				return finish(path)
 			case "ctrl+d":
-				if res2.Item != nil {
-					if err := pruneTarget(res2.Item.Detail); err != nil {
+				if res2.Index >= 0 {
+					if err := pruneTarget(items2[res2.Index].Detail); err != nil {
 						fmt.Fprintln(os.Stderr, paint("1;31", "iwt: "+err.Error()))
 					}
 				}
@@ -181,14 +181,19 @@ func repoItems() ([]picker.Item, error) {
 
 // pickBranch shows the new-worktree input box: pick an unattached local
 // or remote-only branch, or type a new name. The detail column tells the
-// two apart.
-func pickBranch(repo string) (string, error) {
+// two apart; a name on several remotes appears once per remote, and the
+// selection index recovers which remote branch to track (track is nil
+// for local branches and typed names).
+func pickBranch(repo string) (branch string, track *git.RemoteBranch, err error) {
 	branches := git.CandidateBranches(repo)
 	items := make([]picker.Item, len(branches))
 	for i, b := range branches {
 		detail := "local"
 		if b.Ref != "" {
-			detail = b.Ref
+			// The remote name matters on its own: two remotes may fetch
+			// the same branch into the same destination, and the choice
+			// decides which one the new worktree tracks.
+			detail = fmt.Sprintf("%s (%s)", git.ShortRef(b.Ref), b.Remote)
 		}
 		items[i] = picker.Item{Label: b.Name, Detail: detail}
 	}
@@ -201,10 +206,14 @@ func pickBranch(repo string) (string, error) {
 		},
 	})
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	if res.Item != nil {
-		return res.Item.Label, nil
+	if res.Index >= 0 {
+		b := branches[res.Index]
+		if b.Ref != "" {
+			return b.Name, &b, nil
+		}
+		return b.Name, nil, nil
 	}
-	return res.Query, nil
+	return res.Query, nil, nil
 }

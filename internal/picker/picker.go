@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/mattn/go-runewidth"
@@ -60,15 +61,18 @@ type Options struct {
 	Multi bool
 }
 
-// Result is what a picker run returns: the accepting key ("" for enter),
-// the highlighted item (nil when nothing matched), and the query as typed
-// — callers implementing an input box use Query when Item is nil. Items
-// is populated in Multi mode.
+// Result is what a picker run returns, positionally: display strings are
+// not unique identifiers, so callers recover their data through indices
+// into the items slice they passed in. Key is the accepting key ("" for
+// enter), Index the highlighted item (-1 when nothing matched), Indices
+// the marked items in Multi mode (falling back to the highlighted one),
+// and Query the query as typed — an input box uses Query when Index is
+// -1.
 type Result struct {
-	Key   string
-	Item  *Item
-	Items []Item
-	Query string
+	Key     string
+	Index   int
+	Indices []int
+	Query   string
 }
 
 // Run shows the picker on the terminal (rendering on /dev/tty, so stdout
@@ -113,19 +117,16 @@ func Run(items []Item, opts Options) (Result, error) {
 	if final.aborted {
 		return Result{}, ErrAbort
 	}
-	r := Result{Key: final.key, Query: final.query}
-	if final.choice >= 0 {
-		r.Item = &final.items[final.choice]
-	}
+	r := Result{Key: final.key, Query: final.query, Index: final.choice}
 	if opts.Multi {
 		if len(final.marked) > 0 {
 			for i := range final.items {
 				if final.marked[i] {
-					r.Items = append(r.Items, final.items[i])
+					r.Indices = append(r.Indices, i)
 				}
 			}
-		} else if r.Item != nil {
-			r.Items = []Item{*r.Item}
+		} else if final.choice >= 0 {
+			r.Indices = []int{final.choice}
 		}
 	}
 	return r, nil
@@ -167,6 +168,14 @@ type source []Item
 func (s source) String(i int) string { return s[i].Label }
 func (s source) Len() int            { return len(s) }
 
+func (m *model) appendQuery(s string) {
+	if s == "" {
+		return
+	}
+	m.query += s
+	m.filter()
+}
+
 func (m *model) filter() {
 	m.rows = m.rows[:0]
 	if m.query == "" {
@@ -187,6 +196,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+	case tea.PasteMsg:
+		// Bracketed paste arrives as its own message, not key presses.
+		// Control characters would corrupt the single-line query — or
+		// worse: the full Unicode Cc category includes the C1 range
+		// (CSI, OSC, ...), which some terminals interpret as escape
+		// sequences when the query is rendered.
+		m.appendQuery(strings.Map(func(r rune) rune {
+			if unicode.IsControl(r) {
+				return -1
+			}
+			return r
+		}, msg.Content))
 	case tea.KeyPressMsg:
 		k := tea.Key(msg)
 		if m.expect[k.String()] {
@@ -239,10 +260,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.filter()
 		default:
-			if k.Text != "" {
-				m.query += k.Text
-				m.filter()
-			}
+			m.appendQuery(k.Text)
 		}
 	}
 	if h := m.listHeight(); h > 0 {

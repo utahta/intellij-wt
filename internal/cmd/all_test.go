@@ -25,7 +25,7 @@ func TestScanRepos(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmp, "b", "c", "repo2", ".git"), []byte("gitdir: /x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	mkdirAll(t, tmp, ".hidden", "repo3", ".git")                    // hidden: skipped
+	mkdirAll(t, tmp, ".hidden", "repo3", ".git")                   // hidden: skipped
 	mkdirAll(t, tmp, "d1", "d2", "d3", "d4", "d5", "deep", ".git") // beyond maxScanDepth: skipped
 
 	got := scanRepos(tmp, 0)

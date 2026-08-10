@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/mattn/go-runewidth"
 )
 
@@ -90,6 +91,31 @@ func TestViewAlignsDetailsWithQuery(t *testing.T) {
 	// columns must line up regardless of which runes matched.
 	if cols[0] != cols[1] {
 		t.Errorf("detail columns differ with a query: %v", cols)
+	}
+}
+
+func TestPasteAppendsToQuery(t *testing.T) {
+	items := []Item{
+		{Label: "feature-x", Detail: "/detail/a"},
+		{Label: "main", Detail: "/detail/b"},
+	}
+	m := testModel(items, "")
+
+	// C0, DEL, and C1 (e.g. CSI, which terminals may interpret as an
+	// escape sequence) must all be stripped.
+	next, _ := m.Update(tea.PasteMsg{Content: "feat\nure-x\r"})
+	got := next.(model)
+	if got.query != "feature-x" {
+		t.Errorf("query after paste = %q, want %q (control characters stripped)", got.query, "feature-x")
+	}
+	if len(got.rows) != 1 || got.rows[0].item != 0 {
+		t.Errorf("paste did not refilter: rows = %+v", got.rows)
+	}
+
+	next, _ = got.Update(tea.PasteMsg{Content: "[2J"})
+	got = next.(model)
+	if got.query != "feature-x[2J" {
+		t.Errorf("C1 control not stripped: query = %q", got.query)
 	}
 }
 

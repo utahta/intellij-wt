@@ -76,15 +76,10 @@ func selectEntry(entries []worktreeEntry, verb string) (git.Worktree, error) {
 	if err != nil {
 		return git.Worktree{}, err
 	}
-	if res.Item == nil {
+	if res.Index < 0 {
 		return git.Worktree{}, picker.ErrAbort
 	}
-	for _, e := range entries {
-		if e.Path == res.Item.Detail {
-			return e.Worktree, nil
-		}
-	}
-	return git.Worktree{}, picker.ErrAbort
+	return entries[res.Index].Worktree, nil
 }
 
 func selectWorktrees(wts []git.Worktree, verb string) ([]git.Worktree, error) {
@@ -103,15 +98,9 @@ func selectWorktrees(wts []git.Worktree, verb string) ([]git.Worktree, error) {
 	if err != nil {
 		return nil, err
 	}
-	byPath := make(map[string]git.Worktree, len(wts))
-	for _, w := range wts {
-		byPath[w.Path] = w
-	}
-	selected := make([]git.Worktree, 0, len(res.Items))
-	for _, it := range res.Items {
-		if w, ok := byPath[it.Detail]; ok {
-			selected = append(selected, w)
-		}
+	selected := make([]git.Worktree, 0, len(res.Indices))
+	for _, i := range res.Indices {
+		selected = append(selected, wts[i])
 	}
 	return selected, nil
 }

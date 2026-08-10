@@ -164,59 +164,343 @@ func BranchExists(dir, branch string) bool {
 	return err == nil
 }
 
-// Branch is a candidate for a new worktree: a local branch not attached
-// to any worktree, or a remote-only branch (Ref then holds the remote
-// ref, e.g. "origin/feat").
-type Branch struct {
-	Name string
-	Ref  string
+// ShortRef renders a fully qualified remote-tracking ref for display.
+func ShortRef(ref string) string {
+	return strings.TrimPrefix(ref, "refs/remotes/")
+}
+
+// RemoteBranch is a branch a worktree could check out: a remote-tracking
+// branch (its short name, the remote it belongs to, and the fully
+// qualified tracking ref — short names can collide with local branches
+// or tags; use ShortRef for display), or, as a candidate from
+// CandidateBranches, a local branch with Remote and Ref empty.
+type RemoteBranch struct {
+	Remote string
+	Name   string
+	Ref    string
+	// Ambiguous marks a ref that several remotes fetch into: it cannot
+	// be offered as a candidate (its commit depends on fetch order),
+	// but resolution must still see it — "exists but ambiguous" is not
+	// "does not exist".
+	Ambiguous bool
+}
+
+// remoteTrackingBranches lists every remote-tracking branch, resolved
+// through each remote's fetch refspecs, one entry per remote and branch
+// name (several fetch destinations of one remote mirror the same
+// branches, so extras are equivalent, not distinct). It runs a constant
+// number of git invocations regardless of the remote count.
+func remoteTrackingBranches(dir string) []RemoteBranch {
+	remotes := remoteNames(dir)
+	if len(remotes) == 0 {
+		return nil
+	}
+	maps := trackingMapsByRemote(dir, remotes)
+
+	args := []string{"for-each-ref", "--format=%(refname)\t%(symref)"}
+	for _, r := range remotes {
+		for _, m := range maps[r] {
+			if !m.branchCapable() {
+				continue // blockers resolve, but need no refs scanned
+			}
+			if m.exact {
+				args = append(args, m.dstPrefix)
+			} else {
+				// for-each-ref globs stop at "/" (unlike refspec
+				// globs), missing nested branches like feature/foo.
+				// Scan the enclosing literal directory instead, which
+				// matches recursively; branchName does the precise
+				// matching.
+				if i := strings.LastIndex(m.dstPrefix, "/"); i >= 0 {
+					args = append(args, m.dstPrefix[:i+1])
+				} else {
+					args = append(args, "refs/")
+				}
+			}
+		}
+	}
+	// Without a single usable mapping there is nothing to scan — and a
+	// pattern-less for-each-ref would enumerate every ref in the repo.
+	if len(args) == 2 {
+		return nil
+	}
+	out, err := run(dir, args...)
+	if err != nil || out == "" {
+		return nil
+	}
+
+	var branches []RemoteBranch
+	for _, l := range strings.Split(out, "\n") {
+		ref, symref, _ := strings.Cut(strings.TrimSpace(l), "\t")
+		// A symbolic ref (conventionally the remote's HEAD) is an alias
+		// of another branch, not a branch of its own. The pathname does
+		// not decide: an exact refspec may store a real branch at a
+		// HEAD-like path, and a branch named .../HEAD may exist.
+		if symref != "" {
+			continue
+		}
+		// Each remote resolves the ref through its own refspecs, first
+		// match in config order — git's own rule; the first refspec
+		// whose destination covers the ref claims it, even when its
+		// source is not a branch (a tags blocker): later refspecs must
+		// not reinterpret. Every claiming remote is a writer, branch
+		// interpretation or not. Remotes have no order between them.
+		type hit struct {
+			remote, name string
+			idx          int
+		}
+		var writers []hit
+		for _, r := range remotes {
+			for i, m := range maps[r] {
+				name, matched := m.branchName(ref)
+				if !matched {
+					continue
+				}
+				writers = append(writers, hit{r, name, i}) // name may be ""
+				break
+			}
+		}
+		// A ref that several remotes fetch into holds whichever remote
+		// was fetched last: no interpretation can vouch for the commit
+		// it points at. Its branch-shaped readings are kept, flagged,
+		// so resolution can tell "ambiguous" from "does not exist".
+		if len(writers) > 1 {
+			for _, h := range writers {
+				if validBranchName(h.name) {
+					branches = append(branches, RemoteBranch{Remote: h.remote, Name: h.name, Ref: ref, Ambiguous: true})
+				}
+			}
+			continue
+		}
+		if len(writers) == 0 {
+			continue
+		}
+		// The candidate must also be the ref git resolves the name to —
+		// the first refspec whose source matches it. When that
+		// destination is missing (a stale later mirror is all that
+		// remains), the name has no usable upstream and is not offered.
+		h := writers[0]
+		if validBranchName(h.name) && firstSourceMatch(maps[h.remote], h.name) == h.idx {
+			branches = append(branches, RemoteBranch{Remote: h.remote, Name: h.name, Ref: ref})
+		}
+	}
+	return branches
+}
+
+// validBranchName reports whether name can be a local branch: never
+// empty, never ending in "/" (a bare namespace ref), and not a ref name
+// git refuses as a branch — "HEAD" alone (nested names like release/HEAD
+// remain fine) or a leading dash.
+func validBranchName(name string) bool {
+	return name != "" && name != "HEAD" && name[0] != '-' && !strings.HasSuffix(name, "/")
+}
+
+// firstSourceMatch returns the index of the first refspec whose source
+// covers branch name n — the one git resolves the name through.
+func firstSourceMatch(ms []refspecMap, n string) int {
+	full := "refs/heads/" + n
+	for i, m := range ms {
+		if m.exact {
+			if m.srcPrefix != "" && m.srcPrefix == n {
+				return i
+			}
+			continue
+		}
+		if len(full) >= len(m.srcPrefix)+len(m.srcSuffix) &&
+			strings.HasPrefix(full, m.srcPrefix) && strings.HasSuffix(full, m.srcSuffix) {
+			return i
+		}
+	}
+	return -1
+}
+
+// branchName reports whether the map's destination covers ref (matched)
+// and, if so, the branch name it represents — empty when the fetched
+// source is not a branch, in which case the ref is claimed without
+// becoming a candidate.
+func (m refspecMap) branchName(ref string) (name string, matched bool) {
+	if m.exact {
+		if ref != m.dstPrefix {
+			return "", false
+		}
+		return m.srcPrefix, true // "" when the source is not a branch
+	}
+	if len(ref) < len(m.dstPrefix)+len(m.dstSuffix) ||
+		!strings.HasPrefix(ref, m.dstPrefix) || !strings.HasSuffix(ref, m.dstSuffix) {
+		return "", false
+	}
+	x := ref[len(m.dstPrefix) : len(ref)-len(m.dstSuffix)]
+	// Reconstruct the source ref the fetch used (the src parts are kept
+	// verbatim, so the wildcard may consume any part of "refs/heads/");
+	// only sources under refs/heads/ are branches — a broad glob also
+	// covers tags and other namespaces.
+	if n, ok := strings.CutPrefix(m.srcPrefix+x+m.srcSuffix, "refs/heads/"); ok {
+		return n, true
+	}
+	return "", true
+}
+
+// branchCapable reports whether the map can ever yield a branch; maps
+// that cannot (e.g. tags-only refspecs) stay out of the ref scan but
+// still participate in resolution as blockers.
+func (m refspecMap) branchCapable() bool {
+	if m.exact {
+		return m.srcPrefix != ""
+	}
+	return strings.HasPrefix(m.srcPrefix, "refs/heads/") || strings.HasPrefix("refs/heads/", m.srcPrefix)
+}
+
+func remoteNames(dir string) []string {
+	out, err := run(dir, "remote")
+	if err != nil || out == "" {
+		return nil
+	}
+	var names []string
+	for _, l := range strings.Split(out, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			names = append(names, l)
+		}
+	}
+	return names
+}
+
+// refspecMap is one fetch refspec's branch-to-tracking-ref mapping. Git
+// allows a single wildcard anywhere in a pattern refspec, so both sides
+// split around it, kept verbatim: source refs named srcPrefix+<x>+
+// srcSuffix are tracked at dstPrefix+<x>+dstSuffix. An exact (glob-less)
+// refspec maps the single branch srcPrefix to the ref dstPrefix.
+type refspecMap struct {
+	srcPrefix, srcSuffix string
+	dstPrefix, dstSuffix string
+	exact                bool
+}
+
+// trackingMapsByRemote maps each remote to its branch-tracking layout,
+// parsed from all fetch refspecs in one git invocation. Narrowed globs
+// ("+refs/heads/release/*:refs/remotes/vendor/*") shift the branch-name
+// prefix, so both sides of the refspec matter. Refspecs outside these
+// shapes are skipped, and a remote without usable refspecs yields no
+// mappings at all: git resolves @{upstream} through the configured
+// refspecs, so refs iwt merely assumed a layout for could never track.
+func trackingMapsByRemote(dir string, remotes []string) map[string][]refspecMap {
+	maps := make(map[string][]refspecMap, len(remotes))
+	if out, err := run(dir, "config", "--get-regexp", `^remote\..*\.fetch$`); err == nil && out != "" {
+		for _, l := range strings.Split(out, "\n") {
+			key, spec, ok := strings.Cut(strings.TrimSpace(l), " ")
+			if !ok {
+				continue
+			}
+			name := strings.TrimSuffix(strings.TrimPrefix(key, "remote."), ".fetch")
+			src, dst, ok := strings.Cut(strings.TrimPrefix(spec, "+"), ":")
+			if !ok || dst == "" {
+				continue
+			}
+			switch {
+			case strings.Count(src, "*") == 1 && strings.Count(dst, "*") == 1:
+				// The source parts stay verbatim: branchName later
+				// reconstructs the fetched source ref and keeps only
+				// refs/heads/ matches, which uniformly handles
+				// qualified, narrowed, broad, and mid-pattern globs.
+				// Maps that cannot yield branches (tags-only patterns)
+				// are kept regardless: an earlier refspec must block
+				// later ones from reinterpreting its refs as branches.
+				sp, ss, _ := strings.Cut(src, "*")
+				dp, ds, _ := strings.Cut(dst, "*")
+				maps[name] = append(maps[name], refspecMap{
+					srcPrefix: sp,
+					srcSuffix: ss,
+					dstPrefix: dp,
+					dstSuffix: ds,
+				})
+			case !strings.Contains(src, "*") && !strings.Contains(dst, "*"):
+				// Only a qualified branch source can become a
+				// candidate: an unqualified one (e.g. "v1") is resolved
+				// by git's DWIM on the remote, which may pick
+				// refs/tags/v1 — locally unverifiable. Anything else
+				// stays as a blocker (empty branch name).
+				branch := ""
+				if strings.HasPrefix(src, "refs/heads/") {
+					branch = strings.TrimPrefix(src, "refs/heads/")
+				}
+				maps[name] = append(maps[name], refspecMap{
+					srcPrefix: branch,
+					dstPrefix: dst,
+					exact:     true,
+				})
+			}
+		}
+	}
+	return maps
 }
 
 // CandidateBranches returns the branches a new worktree could check out:
 // unattached local branches first, then remote-only branches. Branches
 // already checked out in a worktree (including the main one) are
-// excluded — adding them would fail anyway.
-func CandidateBranches(dir string) []Branch {
-	seen := make(map[string]bool)
-	var locals, remotes []Branch
+// excluded — adding them would fail anyway. A name existing on several
+// remotes yields one candidate per remote: the selection is what
+// disambiguates which ref to track.
+func CandidateBranches(dir string) []RemoteBranch {
+	local := make(map[string]bool)
+	var locals, remotes []RemoteBranch
 	if out, err := run(dir, "branch", "--format=%(refname:short)\t%(worktreepath)"); err == nil && out != "" {
 		for _, l := range strings.Split(out, "\n") {
 			name, wt, _ := strings.Cut(l, "\t")
 			name = strings.TrimSpace(name)
-			if name == "" || seen[name] {
+			if name == "" || local[name] {
 				continue
 			}
-			seen[name] = true
+			local[name] = true
 			if strings.TrimSpace(wt) == "" {
-				locals = append(locals, Branch{Name: name})
+				locals = append(locals, RemoteBranch{Name: name})
 			}
 		}
 	}
-	if out, err := run(dir, "branch", "-r", "--format=%(refname:short)"); err == nil && out != "" {
-		for _, l := range strings.Split(out, "\n") {
-			ref := strings.TrimSpace(l)
-			// origin/HEAD shortens to a bare remote name; only lines
-			// with a remote prefix are branches.
-			_, name, ok := strings.Cut(ref, "/")
-			if !ok || name == "" || name == "HEAD" || seen[name] {
-				continue
-			}
-			seen[name] = true
-			remotes = append(remotes, Branch{Name: name, Ref: ref})
+	// A local branch of the same name wins: it would be checked out
+	// regardless. Ambiguous refs are never offered.
+	for _, rb := range remoteTrackingBranches(dir) {
+		if rb.Ambiguous || local[rb.Name] {
+			continue
 		}
+		remotes = append(remotes, rb)
 	}
 	sort.Slice(locals, func(i, j int) bool { return locals[i].Name < locals[j].Name })
-	sort.Slice(remotes, func(i, j int) bool { return remotes[i].Name < remotes[j].Name })
+	sort.Slice(remotes, func(i, j int) bool {
+		if remotes[i].Name != remotes[j].Name {
+			return remotes[i].Name < remotes[j].Name
+		}
+		if remotes[i].Ref != remotes[j].Ref {
+			return remotes[i].Ref < remotes[j].Ref
+		}
+		return remotes[i].Remote < remotes[j].Remote
+	})
 	return append(locals, remotes...)
 }
 
-// RemoteBranchRef returns "origin/<branch>" when the branch exists on
-// origin, or "".
-func RemoteBranchRef(dir, branch string) string {
-	if _, err := run(dir, "show-ref", "--verify", "refs/remotes/origin/"+branch); err == nil {
-		return "origin/" + branch
+// RemoteBranchRefs returns the remote-tracking branches named branch,
+// resolved through each remote's fetch refspecs, including entries
+// flagged Ambiguous — callers must not treat those as absent. When
+// nothing is ambiguous and origin has the branch, only origin's entry is
+// returned, so more than one result means the name is genuinely
+// ambiguous. Origin is matched by its exact remote name — remote names
+// may contain slashes (e.g. a remote called "origin/team").
+func RemoteBranchRefs(dir, branch string) []RemoteBranch {
+	var rbs []RemoteBranch
+	ambiguous := false
+	for _, rb := range remoteTrackingBranches(dir) {
+		if rb.Name != branch {
+			continue
+		}
+		ambiguous = ambiguous || rb.Ambiguous
+		rbs = append(rbs, rb)
 	}
-	return ""
+	if !ambiguous {
+		for _, rb := range rbs {
+			if rb.Remote == "origin" {
+				return []RemoteBranch{rb}
+			}
+		}
+	}
+	return rbs
 }
 
 // AddWorktree checks out an existing branch into a new worktree at path.
@@ -232,10 +516,46 @@ func AddWorktreeNewBranch(dir, path, branch, base string) error {
 	return runLoud(dir, "worktree", "add", "--quiet", "-b", branch, path, base)
 }
 
-// AddWorktreeTrack creates branch tracking the remote ref and checks it
-// out into a new worktree at path.
-func AddWorktreeTrack(dir, path, branch, remoteRef string) error {
-	return runLoud(dir, "worktree", "add", "--quiet", "--track", "-b", branch, path, remoteRef)
+// AddWorktreeTracking creates branch at the remote-tracking ref rb.Ref,
+// sets it up to track rb's remote branch, and checks it out into a new
+// worktree at path — in that order, so post-checkout hooks observe the
+// upstream, as they did under --track. Tracking is configured explicitly
+// rather than via --track/autoSetupMerge: when fetch destinations
+// overlap, git cannot map the start ref back to a single remote and
+// aborts as ambiguous — the caller already knows which remote the
+// selection belongs to.
+func AddWorktreeTracking(dir, path, branch string, rb RemoteBranch) error {
+	// "--" everywhere a candidate-derived name is passed: branch names
+	// may legitimately begin with "-" and would otherwise parse as
+	// options.
+	if err := runLoud(dir, "branch", "--no-track", "--", branch, rb.Ref); err != nil {
+		return err
+	}
+	if err := configureTracking(dir, branch, rb); err != nil {
+		_, _ = run(dir, "branch", "-D", "--", branch)
+		return err
+	}
+	if err := runLoud(dir, "worktree", "add", "--quiet", "--", path, branch); err != nil {
+		_, _ = run(dir, "branch", "-D", "--", branch)
+		return err
+	}
+	return nil
+}
+
+func configureTracking(dir, branch string, rb RemoteBranch) error {
+	if err := runLoud(dir, "config", "branch."+branch+".remote", rb.Remote); err != nil {
+		return err
+	}
+	if err := runLoud(dir, "config", "branch."+branch+".merge", "refs/heads/"+rb.Name); err != nil {
+		return err
+	}
+	// --track would have applied branch.autoSetupRebase; replicate it.
+	// The start point is always a remote-tracking ref here, so "local"
+	// does not apply.
+	if v, _ := run(dir, "config", "branch.autoSetupRebase"); v == "remote" || v == "always" {
+		return runLoud(dir, "config", "branch."+branch+".rebase", "true")
+	}
+	return nil
 }
 
 func RemoveWorktree(dir, path string, force bool) error {
