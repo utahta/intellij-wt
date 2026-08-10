@@ -416,7 +416,8 @@ func TestBroadFetchRefspec(t *testing.T) {
 	// configured mapping. A tags-only pattern is kept as a blocker but
 	// never scanned or offered.
 	mustGit(repo, "config", "remote.origin.fetch", "+refs/tags/*:refs/tags/*")
-	for _, m := range trackingMapsByRemote(repo, []string{"origin"})["origin"] {
+	posMaps, _ := trackingMapsByRemote(repo, []string{"origin"})
+	for _, m := range posMaps["origin"] {
 		if m.branchCapable() {
 			t.Errorf("tags-only refspec parsed as branch-capable: %+v", m)
 		}
@@ -454,6 +455,160 @@ func TestTagsBlockerRefspec(t *testing.T) {
 	}
 	if refs := RemoteBranchRefs(repo, "tags/v1"); len(refs) != 0 {
 		t.Errorf("RemoteBranchRefs(tags/v1) = %+v, want empty", refs)
+	}
+}
+
+func TestNegativeFetchRefspecs(t *testing.T) {
+	dir := t.TempDir()
+	origin := filepath.Join(dir, "origin")
+	repo := filepath.Join(dir, "repo")
+	mustGit := func(d string, args ...string) {
+		t.Helper()
+		if _, err := run(d, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustGit(dir, "init", "-q", "-b", "main", origin)
+	mustGit(origin, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "init")
+	mustGit(origin, "branch", "topic")
+	mustGit(origin, "branch", "private/secret")
+	mustGit(dir, "init", "-q", "-b", "main", repo)
+	mustGit(repo, "remote", "add", "origin", origin)
+	mustGit(repo, "fetch", "-q", "--no-tags", "origin")
+
+	// A negative refspec added after a fetch leaves the excluded
+	// tracking ref behind (fetch --prune does not remove it either),
+	// but git will never update it again: it must not be offered.
+	mustGit(repo, "config", "--add", "remote.origin.fetch", "^refs/heads/private/*")
+	want := []RemoteBranch{
+		{Remote: "origin", Name: "main", Ref: "refs/remotes/origin/main"},
+		{Remote: "origin", Name: "topic", Ref: "refs/remotes/origin/topic"},
+	}
+	if got := CandidateBranches(repo); !reflect.DeepEqual(got, want) {
+		t.Errorf("CandidateBranches with a negative pattern = %+v, want %+v", got, want)
+	}
+	if refs := RemoteBranchRefs(repo, "private/secret"); len(refs) != 0 {
+		t.Errorf("RemoteBranchRefs(private/secret) = %+v, want empty", refs)
+	}
+
+	// Exact negatives (no wildcard) exclude a single source ref.
+	mustGit(repo, "config", "--add", "remote.origin.fetch", "^refs/heads/topic")
+	if got := CandidateBranches(repo); !reflect.DeepEqual(got, want[:1]) {
+		t.Errorf("CandidateBranches with an exact negative = %+v, want %+v", got, want[:1])
+	}
+}
+
+func TestNegativeRefspecKeepsAmbiguity(t *testing.T) {
+	dir := t.TempDir()
+	origin := filepath.Join(dir, "origin")
+	repo := filepath.Join(dir, "repo")
+	mustGit := func(d string, args ...string) {
+		t.Helper()
+		if _, err := run(d, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustGit(dir, "init", "-q", "-b", "main", origin)
+	mustGit(origin, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "init")
+	mustGit(origin, "branch", "topic")
+	mustGit(origin, "branch", "private/secret")
+	mustGit(dir, "init", "-q", "-b", "main", repo)
+	mustGit(repo, "remote", "add", "origin", origin)
+	mustGit(repo, "remote", "add", "backup", origin)
+	mustGit(repo, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/shared/*")
+	mustGit(repo, "config", "remote.backup.fetch", "+refs/heads/*:refs/remotes/shared/*")
+	mustGit(repo, "config", "--add", "remote.backup.fetch", "^refs/heads/private/*")
+	mustGit(repo, "fetch", "-q", "--no-tags", "origin")
+	mustGit(repo, "fetch", "-q", "--no-tags", "backup")
+
+	// Both remotes fetch into refs/remotes/shared/*. backup's negative
+	// stops it from writing private/* from now on, but does not erase
+	// what a fetch before the negative existed may have written: the
+	// ref stays ambiguous, only origin's reading survives as flagged.
+	if refs := RemoteBranchRefs(repo, "topic"); len(refs) != 2 || !refs[0].Ambiguous || !refs[1].Ambiguous {
+		t.Errorf("RemoteBranchRefs(topic) = %+v, want two ambiguous entries", refs)
+	}
+	want := []RemoteBranch{{Remote: "origin", Name: "private/secret", Ref: "refs/remotes/shared/private/secret", Ambiguous: true}}
+	if refs := RemoteBranchRefs(repo, "private/secret"); !reflect.DeepEqual(refs, want) {
+		t.Errorf("RemoteBranchRefs(private/secret) = %+v, want %+v", refs, want)
+	}
+	if got := CandidateBranches(repo); len(got) != 0 {
+		t.Errorf("CandidateBranches = %+v, want empty", got)
+	}
+}
+
+func TestNegatedBlockerStillBlocks(t *testing.T) {
+	dir := t.TempDir()
+	origin := filepath.Join(dir, "origin")
+	repo := filepath.Join(dir, "repo")
+	mustGit := func(d string, args ...string) {
+		t.Helper()
+		if _, err := run(d, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustGit(dir, "init", "-q", "-b", "main", origin)
+	mustGit(origin, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "init")
+	mustGit(origin, "branch", "frozen/x")
+	mustGit(origin, "tag", "v1")
+	mustGit(dir, "init", "-q", "-b", "main", repo)
+	mustGit(repo, "remote", "add", "origin", origin)
+
+	// The tag v1 is fetched into frozen/ while no negative exists yet.
+	mustGit(repo, "config", "remote.origin.fetch", "+refs/tags/*:refs/remotes/origin/frozen/*")
+	mustGit(repo, "fetch", "-q", "--no-tags", "origin")
+
+	// Excluding the tags now does not delete that write: frozen/v1
+	// still holds the tag's commit and must not be reinterpreted as
+	// branch frozen/v1 by the later heads refspec — the negated
+	// mapping keeps its claim on everything under frozen/, including
+	// frozen/x, which cannot be told apart from a stale tag locally.
+	mustGit(repo, "config", "--add", "remote.origin.fetch", "^refs/tags/*")
+	mustGit(repo, "config", "--add", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
+	mustGit(repo, "fetch", "-q", "--no-tags", "origin")
+	want := []RemoteBranch{{Remote: "origin", Name: "main", Ref: "refs/remotes/origin/main"}}
+	if got := CandidateBranches(repo); !reflect.DeepEqual(got, want) {
+		t.Errorf("CandidateBranches with a negated blocker = %+v, want %+v", got, want)
+	}
+	for _, name := range []string{"frozen/v1", "frozen/x"} {
+		if refs := RemoteBranchRefs(repo, name); len(refs) != 0 {
+			t.Errorf("RemoteBranchRefs(%s) = %+v, want empty", name, refs)
+		}
+	}
+}
+
+func TestNegativeWithUnqualifiedSource(t *testing.T) {
+	dir := t.TempDir()
+	origin := filepath.Join(dir, "origin")
+	repo := filepath.Join(dir, "repo")
+	mustGit := func(d string, args ...string) {
+		t.Helper()
+		if _, err := run(d, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustGit(dir, "init", "-q", "-b", "main", origin)
+	mustGit(origin, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "init")
+	mustGit(origin, "branch", "foo")
+	mustGit(dir, "init", "-q", "-b", "main", repo)
+	mustGit(repo, "remote", "add", "origin", origin)
+
+	// An unqualified exact source ("foo") is DWIM-resolved on the
+	// remote, so git matches negatives against the resolved ref
+	// (^refs/heads/foo excludes it; a raw ^foo matches nothing). iwt
+	// cannot resolve it locally and already treats such mappings as
+	// non-candidate blockers, which covers both readings; the ref they
+	// claim must stay blocked, not fall through to later refspecs.
+	mustGit(repo, "config", "remote.origin.fetch", "foo:refs/remotes/origin/bar")
+	mustGit(repo, "config", "--add", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
+	mustGit(repo, "fetch", "-q", "--no-tags", "origin")
+	mustGit(repo, "config", "--add", "remote.origin.fetch", "^refs/heads/foo")
+	want := []RemoteBranch{{Remote: "origin", Name: "main", Ref: "refs/remotes/origin/main"}}
+	if got := CandidateBranches(repo); !reflect.DeepEqual(got, want) {
+		t.Errorf("CandidateBranches with an unqualified source = %+v, want %+v", got, want)
+	}
+	if refs := RemoteBranchRefs(repo, "bar"); len(refs) != 0 {
+		t.Errorf("RemoteBranchRefs(bar) = %+v, want empty", refs)
 	}
 }
 

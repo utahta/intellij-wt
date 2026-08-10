@@ -195,7 +195,7 @@ func remoteTrackingBranches(dir string) []RemoteBranch {
 	if len(remotes) == 0 {
 		return nil
 	}
-	maps := trackingMapsByRemote(dir, remotes)
+	maps, negs := trackingMapsByRemote(dir, remotes)
 
 	args := []string{"for-each-ref", "--format=%(refname)\t%(symref)"}
 	for _, r := range remotes {
@@ -256,6 +256,18 @@ func remoteTrackingBranches(dir string) []RemoteBranch {
 				if !matched {
 					continue
 				}
+				// A negated source is no longer fetched, but negatives
+				// do not delete what earlier fetches wrote: the mapping
+				// may have written this ref before the negative existed,
+				// so its claim stands — it just cannot vouch for the
+				// content anymore, so never as a candidate. Only branch
+				// readings need checking (blockers have nothing to lose),
+				// which also keeps the comparison on fully qualified
+				// source refs — the resolved form git matches negatives
+				// against verbatim, without DWIM.
+				if name != "" && negated(negs[r], m.source(ref)) {
+					name = ""
+				}
 				writers = append(writers, hit{r, name, i}) // name may be ""
 				break
 			}
@@ -301,7 +313,7 @@ func firstSourceMatch(ms []refspecMap, n string) int {
 	full := "refs/heads/" + n
 	for i, m := range ms {
 		if m.exact {
-			if m.srcPrefix != "" && m.srcPrefix == n {
+			if m.srcPrefix == full {
 				return i
 			}
 			continue
@@ -323,21 +335,29 @@ func (m refspecMap) branchName(ref string) (name string, matched bool) {
 		if ref != m.dstPrefix {
 			return "", false
 		}
-		return m.srcPrefix, true // "" when the source is not a branch
-	}
-	if len(ref) < len(m.dstPrefix)+len(m.dstSuffix) ||
+	} else if len(ref) < len(m.dstPrefix)+len(m.dstSuffix) ||
 		!strings.HasPrefix(ref, m.dstPrefix) || !strings.HasSuffix(ref, m.dstSuffix) {
 		return "", false
 	}
-	x := ref[len(m.dstPrefix) : len(ref)-len(m.dstSuffix)]
 	// Reconstruct the source ref the fetch used (the src parts are kept
-	// verbatim, so the wildcard may consume any part of "refs/heads/");
+	// verbatim, so a wildcard may consume any part of "refs/heads/");
 	// only sources under refs/heads/ are branches — a broad glob also
-	// covers tags and other namespaces.
-	if n, ok := strings.CutPrefix(m.srcPrefix+x+m.srcSuffix, "refs/heads/"); ok {
+	// covers tags and other namespaces, and an exact source may name a
+	// tag or an unqualified DWIM ref.
+	if n, ok := strings.CutPrefix(m.source(ref), "refs/heads/"); ok {
 		return n, true
 	}
 	return "", true
+}
+
+// source returns the remote source ref the fetch stores at ref; the
+// map's destination must cover ref (branchName matched).
+func (m refspecMap) source(ref string) string {
+	if m.exact {
+		return m.srcPrefix
+	}
+	x := ref[len(m.dstPrefix) : len(ref)-len(m.dstSuffix)]
+	return m.srcPrefix + x + m.srcSuffix
 }
 
 // branchCapable reports whether the map can ever yield a branch; maps
@@ -345,7 +365,7 @@ func (m refspecMap) branchName(ref string) (name string, matched bool) {
 // still participate in resolution as blockers.
 func (m refspecMap) branchCapable() bool {
 	if m.exact {
-		return m.srcPrefix != ""
+		return strings.HasPrefix(m.srcPrefix, "refs/heads/")
 	}
 	return strings.HasPrefix(m.srcPrefix, "refs/heads/") || strings.HasPrefix("refs/heads/", m.srcPrefix)
 }
@@ -375,6 +395,36 @@ type refspecMap struct {
 	exact                bool
 }
 
+// negRefspec is one negative fetch refspec ("^refs/heads/private/*").
+// Git fetches a source ref only when it matches a positive refspec and
+// no negative one, so a negative is an exclusion over the remote's whole
+// positive mapping, not an ordered blocker. It is kept verbatim: git
+// matches it against fully qualified source refs without DWIM-resolving
+// it (an unqualified "^foo" matches nothing).
+type negRefspec struct {
+	prefix, suffix string
+	exact          bool
+}
+
+// matches reports whether the negative refspec excludes source ref src.
+func (n negRefspec) matches(src string) bool {
+	if n.exact {
+		return src == n.prefix
+	}
+	return len(src) >= len(n.prefix)+len(n.suffix) &&
+		strings.HasPrefix(src, n.prefix) && strings.HasSuffix(src, n.suffix)
+}
+
+// negated reports whether src is excluded by any negative fetch refspec.
+func negated(negs []negRefspec, src string) bool {
+	for _, n := range negs {
+		if n.matches(src) {
+			return true
+		}
+	}
+	return false
+}
+
 // trackingMapsByRemote maps each remote to its branch-tracking layout,
 // parsed from all fetch refspecs in one git invocation. Narrowed globs
 // ("+refs/heads/release/*:refs/remotes/vendor/*") shift the branch-name
@@ -382,8 +432,11 @@ type refspecMap struct {
 // shapes are skipped, and a remote without usable refspecs yields no
 // mappings at all: git resolves @{upstream} through the configured
 // refspecs, so refs iwt merely assumed a layout for could never track.
-func trackingMapsByRemote(dir string, remotes []string) map[string][]refspecMap {
+// Negative refspecs come back separately per remote: they exclude
+// sources from every positive mapping rather than mapping anything.
+func trackingMapsByRemote(dir string, remotes []string) (map[string][]refspecMap, map[string][]negRefspec) {
 	maps := make(map[string][]refspecMap, len(remotes))
+	negs := make(map[string][]negRefspec)
 	if out, err := run(dir, "config", "--get-regexp", `^remote\..*\.fetch$`); err == nil && out != "" {
 		for _, l := range strings.Split(out, "\n") {
 			key, spec, ok := strings.Cut(strings.TrimSpace(l), " ")
@@ -391,19 +444,32 @@ func trackingMapsByRemote(dir string, remotes []string) map[string][]refspecMap 
 				continue
 			}
 			name := strings.TrimSuffix(strings.TrimPrefix(key, "remote."), ".fetch")
+			if src, ok := strings.CutPrefix(spec, "^"); ok {
+				// A negative refspec has a source only; one with a
+				// destination or several wildcards is not one git
+				// accepts, so it cannot mean anything here either.
+				if strings.Contains(src, ":") || strings.Count(src, "*") > 1 {
+					continue
+				}
+				p, s, glob := strings.Cut(src, "*")
+				negs[name] = append(negs[name], negRefspec{prefix: p, suffix: s, exact: !glob})
+				continue
+			}
 			src, dst, ok := strings.Cut(strings.TrimPrefix(spec, "+"), ":")
 			if !ok || dst == "" {
 				continue
 			}
+			// The source stays verbatim in both shapes: branchName later
+			// reconstructs the fetched source ref and keeps only
+			// refs/heads/ matches, which uniformly handles qualified,
+			// narrowed, broad, and mid-pattern globs — and exact sources
+			// that are not branches (tags, or unqualified names resolved
+			// by git's DWIM on the remote, which may pick refs/tags/v1 —
+			// locally unverifiable). Maps that cannot yield branches are
+			// kept regardless: an earlier refspec must block later ones
+			// from reinterpreting its refs as branches.
 			switch {
 			case strings.Count(src, "*") == 1 && strings.Count(dst, "*") == 1:
-				// The source parts stay verbatim: branchName later
-				// reconstructs the fetched source ref and keeps only
-				// refs/heads/ matches, which uniformly handles
-				// qualified, narrowed, broad, and mid-pattern globs.
-				// Maps that cannot yield branches (tags-only patterns)
-				// are kept regardless: an earlier refspec must block
-				// later ones from reinterpreting its refs as branches.
 				sp, ss, _ := strings.Cut(src, "*")
 				dp, ds, _ := strings.Cut(dst, "*")
 				maps[name] = append(maps[name], refspecMap{
@@ -413,24 +479,15 @@ func trackingMapsByRemote(dir string, remotes []string) map[string][]refspecMap 
 					dstSuffix: ds,
 				})
 			case !strings.Contains(src, "*") && !strings.Contains(dst, "*"):
-				// Only a qualified branch source can become a
-				// candidate: an unqualified one (e.g. "v1") is resolved
-				// by git's DWIM on the remote, which may pick
-				// refs/tags/v1 — locally unverifiable. Anything else
-				// stays as a blocker (empty branch name).
-				branch := ""
-				if strings.HasPrefix(src, "refs/heads/") {
-					branch = strings.TrimPrefix(src, "refs/heads/")
-				}
 				maps[name] = append(maps[name], refspecMap{
-					srcPrefix: branch,
+					srcPrefix: src,
 					dstPrefix: dst,
 					exact:     true,
 				})
 			}
 		}
 	}
-	return maps
+	return maps, negs
 }
 
 // CandidateBranches returns the branches a new worktree could check out:
