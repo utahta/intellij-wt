@@ -20,7 +20,7 @@ import (
 var rootCmd = &cobra.Command{
 	Use:           "iwt",
 	Short:         "Manage git worktrees and open them in IntelliJ IDEA",
-	Version:       "0.1.0",
+	Version:       "0.2.0",
 	SilenceUsage:  true,
 	SilenceErrors: true,
 }
