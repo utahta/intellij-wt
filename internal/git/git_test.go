@@ -896,3 +896,32 @@ func TestOwnerFromURL(t *testing.T) {
 		}
 	}
 }
+
+func TestAmbiguousBranchAndTagName(t *testing.T) {
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "repo")
+	mustGit := func(d string, args ...string) {
+		t.Helper()
+		if _, err := run(d, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustGit(dir, "init", "-q", "-b", "main", repo)
+	mustGit(repo, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "init")
+	mustGit(repo, "branch", "release")
+	mustGit(repo, "tag", "release")
+
+	// git shortens ref names only as far as stays unambiguous, so with a
+	// tag of the same name the branch reads as "heads/release" — a name
+	// no branch answers to. Checking that out would create a second
+	// branch called "heads/release" off the default branch instead.
+	want := []RemoteBranch{{Name: "release"}}
+	if got := CandidateBranches(repo); !reflect.DeepEqual(got, want) {
+		t.Errorf("CandidateBranches with a branch and tag of one name = %+v, want %+v", got, want)
+	}
+	// The same shortening would keep the branch from ever matching the
+	// name asked about, leaving a merged branch looking unmerged.
+	if !IsMerged(repo, "release", "main") {
+		t.Error("IsMerged(release, main) = false, want true")
+	}
+}

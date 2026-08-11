@@ -499,7 +499,11 @@ func trackingMapsByRemote(dir string, remotes []string) (map[string][]refspecMap
 func CandidateBranches(dir string) []RemoteBranch {
 	local := make(map[string]bool)
 	var locals, remotes []RemoteBranch
-	if out, err := run(dir, "branch", "--format=%(refname:short)\t%(worktreepath)"); err == nil && out != "" {
+	// refname:short would not do: git shortens ambiguously, so a branch
+	// that shares its name with a tag comes back as "heads/release" —
+	// a name no branch answers to, which would be checked out by
+	// creating a second branch of that very name.
+	if out, err := run(dir, "branch", "--format=%(refname:lstrip=2)\t%(worktreepath)"); err == nil && out != "" {
 		for _, l := range strings.Split(out, "\n") {
 			name, wt, _ := strings.Cut(l, "\t")
 			name = strings.TrimSpace(name)
@@ -643,7 +647,10 @@ func LastCommitRel(path string) string {
 
 // IsMerged reports whether branch is fully merged into the into branch.
 func IsMerged(dir, branch, into string) bool {
-	out, err := run(dir, "branch", "--merged", into, "--format=%(refname:short)")
+	// lstrip=2, not refname:short: the latter shortens ambiguously (a
+	// branch sharing a tag's name reads as "heads/release"), and would
+	// never match the name asked about.
+	out, err := run(dir, "branch", "--merged", into, "--format=%(refname:lstrip=2)")
 	if err != nil {
 		return false
 	}

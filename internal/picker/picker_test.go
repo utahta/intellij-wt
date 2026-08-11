@@ -153,6 +153,50 @@ func TestCtrlHDeletesLikeBackspace(t *testing.T) {
 	}
 }
 
+func TestSanitizeNeutralizesUntrustedStrings(t *testing.T) {
+	for _, tt := range []struct {
+		name, in, want string
+	}{
+		{"csi", "wt\x1b[2Jgone", "wt�[2Jgone"},
+		{"newline", "main\nrogue", "main�rogue"},
+		{"c1 introducer", "wt\u009b2Jgone", "wt�2Jgone"},
+		{"del", "wt\x7f", "wt�"},
+		{"invalid utf-8", "wt\xff", "wt�"},
+		{"kept as is", "feature/日本語 (main)", "feature/日本語 (main)"},
+	} {
+		if got := Sanitize(tt.in); got != tt.want {
+			t.Errorf("%s: Sanitize(%q) = %q, want %q", tt.name, tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestViewDrawsNoInjectedSequences(t *testing.T) {
+	// A directory can be named with an ESC in it, and a config value can
+	// carry one too. Drawn as they arrive, the terminal would obey them —
+	// OSC 52 reaches the clipboard — and a newline would split one row
+	// into two, moving every row below it out of place.
+	items := sanitizeItems([]Item{
+		{Label: "wt\x1b[2J", Detail: "/detail/a\x1b]52;c;ZXZpbA==\x07"},
+		{Label: "main\nrogue", Detail: "/detail/b"},
+	})
+	m := testModel(items, "")
+	view := m.View().Content
+
+	for _, seq := range []string{"\x1b[2J", "\x1b]52", "\x1b]"} {
+		if strings.Contains(view, seq) {
+			t.Errorf("view carries the injected sequence %q", seq)
+		}
+	}
+	if !strings.Contains(view, "�") {
+		t.Error("view drops the neutralized characters instead of marking them")
+	}
+	// Prompt, counter rule, and one line per item: the newline in a label
+	// must not have added a line.
+	if lines := plainLines(m); len(lines) != 4 {
+		t.Errorf("view has %d lines, want 4:\n%q", len(lines), lines)
+	}
+}
+
 func TestResultDistinguishesNoAnswerFromAnAnswer(t *testing.T) {
 	items := []Item{{Label: "no"}, {Label: "yes"}}
 

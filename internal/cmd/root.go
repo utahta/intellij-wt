@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -34,9 +35,15 @@ func Execute() error {
 	return err
 }
 
-// paint wraps s in an ANSI color (SGR code) when stderr is a terminal, so
-// notices stand out between picker redraws. NO_COLOR disables it.
+// paint prepares a message for stderr, wrapped in an ANSI color (SGR
+// code) when stderr is a terminal so notices stand out between picker
+// redraws; NO_COLOR disables the color. Whatever the message is made of,
+// nothing in it may steer the terminal, so escapes are neutralized here
+// too — some messages carry text iwt never sees, like git's own output
+// inside a wrapped error. Results on stdout stay untouched: shell
+// wrappers cd into those.
 func paint(code, s string) string {
+	s = safeMessage(s)
 	if os.Getenv("NO_COLOR") != "" {
 		return s
 	}
@@ -44,6 +51,25 @@ func paint(code, s string) string {
 		return s
 	}
 	return "\033[" + code + "m" + s + "\033[0m"
+}
+
+// safeMessage neutralizes what a terminal would act on while leaving a
+// message's own shape intact: newlines and tabs lay out diagnostics —
+// cobra's command suggestions arrive as several lines — so they stay,
+// while an ESC or any other control character becomes U+FFFD. Values
+// quoted inside a message get the stricter treatment of picker.Sanitize
+// where they are put in: a path has no business adding a line of its own
+// to iwt's output.
+func safeMessage(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' {
+			return r
+		}
+		if unicode.IsControl(r) {
+			return '�'
+		}
+		return r
+	}, s)
 }
 
 // worktreePath places worktrees under a shared root (default

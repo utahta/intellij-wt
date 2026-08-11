@@ -112,3 +112,28 @@ func TestConfirmPipedStdin(t *testing.T) {
 		r.Close()
 	}
 }
+
+func TestSafeMessageKeepsDiagnosticStructure(t *testing.T) {
+	// cobra lays its diagnostics out over several lines, indented with
+	// tabs; that shape is iwt's own and has to survive.
+	in := "unknown command \"opne\" for \"iwt\"\n\nDid you mean this?\n\topen"
+	if got := safeMessage(in); got != in {
+		t.Errorf("safeMessage mangled a multi-line diagnostic:\n got %q\nwant %q", got, in)
+	}
+
+	for _, tt := range []struct {
+		name, in, want string
+	}{
+		{"csi", "x\x1b[2Jy", "x�[2Jy"},
+		{"c1 introducer", "x\u009by", "x�y"},
+		{"del", "x\x7fy", "x�y"},
+		// A lone CR returns to column 0, letting what follows overwrite
+		// the message: it is not structure, unlike a newline.
+		{"carriage return", "x\ry", "x�y"},
+		{"kept as is", "branch \"feature/日本語\" is merged", "branch \"feature/日本語\" is merged"},
+	} {
+		if got := safeMessage(tt.in); got != tt.want {
+			t.Errorf("%s: safeMessage(%q) = %q, want %q", tt.name, tt.in, got, tt.want)
+		}
+	}
+}

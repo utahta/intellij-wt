@@ -11,6 +11,7 @@ import (
 
 	"github.com/utahta/intellij-wt/internal/git"
 	"github.com/utahta/intellij-wt/internal/idea"
+	"github.com/utahta/intellij-wt/internal/picker"
 )
 
 var addNoOpen bool
@@ -119,7 +120,7 @@ func createWorktree(root, branch, base string, track *git.RemoteBranch) (string,
 		return "", err
 	}
 	allowDirenv(path)
-	fmt.Fprintln(os.Stderr, paint("1;32", "created: "+path))
+	fmt.Fprintln(os.Stderr, paint("1;32", "created: "+picker.Sanitize(path)))
 	return path, nil
 }
 

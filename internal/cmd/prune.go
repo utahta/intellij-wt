@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/utahta/intellij-wt/internal/git"
+	"github.com/utahta/intellij-wt/internal/picker"
 )
 
 var (
@@ -118,7 +119,7 @@ func pruneTarget(target string) error {
 		return err
 	}
 	if wt.Main {
-		return fmt.Errorf("cannot remove the main worktree %s", wt.Path)
+		return fmt.Errorf("cannot remove the main worktree %s", picker.Sanitize(wt.Path))
 	}
 	root, err := git.MainRoot(wt.Path)
 	if err != nil {
@@ -144,15 +145,15 @@ func removeWorktrees(root string, wts []git.Worktree, merged bool) error {
 		force := pruneForce
 		if !force && git.IsDirty(w.Path) {
 			if merged {
-				fmt.Fprintln(os.Stderr, paint("33", "skipped (dirty): "+w.Path))
+				fmt.Fprintln(os.Stderr, paint("33", "skipped (dirty): "+picker.Sanitize(w.Path)))
 				continue
 			}
-			ok, err := confirmFn(fmt.Sprintf("%s has uncommitted changes. Remove anyway?", w.Path))
+			ok, err := confirmFn(fmt.Sprintf("%s has uncommitted changes. Remove anyway?", picker.Sanitize(w.Path)))
 			if err != nil {
 				return err
 			}
 			if !ok {
-				fmt.Fprintln(os.Stderr, paint("33", "skipped: "+w.Path))
+				fmt.Fprintln(os.Stderr, paint("33", "skipped: "+picker.Sanitize(w.Path)))
 				continue
 			}
 			force = true
@@ -161,7 +162,7 @@ func removeWorktrees(root string, wts []git.Worktree, merged bool) error {
 			fmt.Fprintln(os.Stderr, paint("1;31", fmt.Sprintf("iwt: %v", err)))
 			continue
 		}
-		fmt.Fprintln(os.Stderr, paint("1;32", "removed: "+w.Path))
+		fmt.Fprintln(os.Stderr, paint("1;32", "removed: "+picker.Sanitize(w.Path)))
 
 		if w.Branch == "" {
 			continue
@@ -193,7 +194,7 @@ func removeWorktrees(root string, wts []git.Worktree, merged bool) error {
 			if err := git.DeleteBranch(root, w.Branch); err != nil {
 				fmt.Fprintln(os.Stderr, paint("1;31", fmt.Sprintf("iwt: %v", err)))
 			} else {
-				fmt.Fprintln(os.Stderr, paint("1;32", "deleted branch: "+w.Branch))
+				fmt.Fprintln(os.Stderr, paint("1;32", "deleted branch: "+picker.Sanitize(w.Branch)))
 			}
 		}
 	}

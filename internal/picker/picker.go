@@ -93,6 +93,8 @@ func Run(items []Item, opts Options) (Result, error) {
 	}
 	defer tty.Close()
 
+	items = sanitizeItems(items)
+
 	labelW := 0
 	for _, it := range items {
 		if w := runewidth.StringWidth(it.Label); w > labelW {
@@ -104,7 +106,7 @@ func Run(items []Item, opts Options) (Result, error) {
 		expect[k] = true
 	}
 	m := model{
-		prompt:      opts.Prompt,
+		prompt:      Sanitize(opts.Prompt),
 		promptStyle: promptStyle(opts.Tone),
 		header:      renderKeyHints(opts.Keys),
 		items:       items,
@@ -151,6 +153,36 @@ func result(final model, multi bool) (Result, error) {
 		}
 	}
 	return r, nil
+}
+
+// sanitizeItems copies the items with everything drawn neutralized:
+// labels and details come from outside — paths, branch names, labels
+// built from remote URLs — and the matcher works on what is shown, so
+// they are cleaned before either sees them. Callers keep addressing
+// their own slice by index, which the copy preserves.
+func sanitizeItems(items []Item) []Item {
+	shown := make([]Item, len(items))
+	for i, it := range items {
+		shown[i] = Item{Label: Sanitize(it.Label), Detail: Sanitize(it.Detail)}
+	}
+	return shown
+}
+
+// Sanitize replaces every control character, C0 and C1 alike, with
+// U+FFFD so that something visible stays in its place. Names iwt does
+// not author can hold them — a directory may be named with an ESC, a
+// remote URL in a config file likewise — and drawn as they are they
+// would reach the terminal as escape sequences (clearing the screen,
+// driving the clipboard through OSC 52) or, with a newline, break the
+// one-row-per-item layout the picker counts on. Invalid UTF-8 collapses
+// to U+FFFD on the way through as well.
+func Sanitize(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return '�'
+		}
+		return r
+	}, s)
 }
 
 // row is one filtered entry: the item index and the byte offsets of the
