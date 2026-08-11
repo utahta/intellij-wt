@@ -119,6 +119,39 @@ func TestPasteAppendsToQuery(t *testing.T) {
 	}
 }
 
+func TestCtrlHDeletesLikeBackspace(t *testing.T) {
+	// Terminals may send the same byte (0x08) for ctrl+h and backspace,
+	// and fzf binds ctrl+h to deletion too: it must edit the query, not
+	// mean anything else.
+	items := []Item{
+		{Label: "feature-x", Detail: "/detail/a"},
+		{Label: "main", Detail: "/detail/b"},
+	}
+	m := testModel(items, "fe")
+
+	next, _ := m.Update(tea.KeyPressMsg{Code: 'h', Mod: tea.ModCtrl})
+	got := next.(model)
+	if got.query != "f" {
+		t.Errorf("query after ctrl+h = %q, want %q", got.query, "f")
+	}
+	next, _ = got.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	got = next.(model)
+	if got.query != "" {
+		t.Errorf("query after backspace = %q, want empty", got.query)
+	}
+	// On an empty query both keys are inert — neither aborts nor picks.
+	for _, key := range []tea.KeyPressMsg{
+		{Code: 'h', Mod: tea.ModCtrl},
+		{Code: tea.KeyBackspace},
+	} {
+		next, _ = got.Update(key)
+		got = next.(model)
+		if got.done || got.aborted {
+			t.Errorf("%s on an empty query ended the picker", tea.Key(key))
+		}
+	}
+}
+
 func TestViewCJKLabelAlignment(t *testing.T) {
 	items := []Item{
 		{Label: "feature/日本語ブランチ", Detail: "/detail/a"},

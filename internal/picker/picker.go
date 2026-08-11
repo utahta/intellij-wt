@@ -240,7 +240,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cursor < len(m.rows)-1 {
 				m.cursor++
 			}
-		case "backspace":
+		// ctrl+h deletes like backspace, as everywhere else on a
+		// terminal: both can arrive as the same byte (0x08), whichever
+		// key was pressed — one more reason it can never mean anything
+		// else here.
+		case "backspace", "ctrl+h":
 			if m.query != "" {
 				r := []rune(m.query)
 				m.query = string(r[:len(r)-1])

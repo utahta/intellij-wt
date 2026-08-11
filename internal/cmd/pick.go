@@ -21,8 +21,7 @@ var pickCmd = &cobra.Command{
 	Use:   "pick (--open | --cd)",
 	Short: "Staged repository/worktree picker (backs the shell widgets)",
 	Long: `Pick through the staged inline picker: repositories first, Tab drills
-into the highlighted repository's worktrees, Esc/Ctrl+H backs out one
-level.
+into the highlighted repository's worktrees, Esc backs out one level.
 
 With --open, Enter opens the selection in IDEA, Ctrl+N creates a
 worktree for a picked or typed branch, Ctrl+D removes the highlighted
@@ -45,20 +44,20 @@ func runPick(cmd *cobra.Command, args []string) error {
 	}
 
 	verb := "cd"
-	expect := []string{"ctrl+h"}
+	var expect []string
 	keys2 := []picker.KeyHint{
 		{Key: "enter", Desc: verb, Tone: picker.TonePrimary},
-		{Key: "ctrl-h/esc", Desc: "back"},
+		{Key: "esc", Desc: "back"},
 	}
 	if pickOpen {
 		verb = "open in IDEA"
-		expect = []string{"ctrl+h", "ctrl+n", "ctrl+d", "ctrl+x"}
+		expect = []string{"ctrl+n", "ctrl+d", "ctrl+x"}
 		keys2 = []picker.KeyHint{
 			{Key: "enter", Desc: verb, Tone: picker.TonePrimary},
 			{Key: "ctrl-n", Desc: "new", Tone: picker.ToneCreate},
 			{Key: "ctrl-d", Desc: "remove", Tone: picker.ToneDanger},
 			{Key: "ctrl-x", Desc: "prune merged", Tone: picker.ToneDanger},
-			{Key: "ctrl-h/esc", Desc: "back"},
+			{Key: "esc", Desc: "back"},
 		}
 	}
 
@@ -116,8 +115,6 @@ stageOne:
 				return err
 			}
 			switch res2.Key {
-			case "ctrl+h":
-				continue stageOne
 			case "":
 				if res2.Index < 0 {
 					return nil
