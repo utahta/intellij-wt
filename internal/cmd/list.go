@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/utahta/intellij-wt/internal/git"
+	"github.com/utahta/intellij-wt/internal/picker"
 )
 
 var (
@@ -26,7 +27,7 @@ repository.
 --repos lists repositories (their main worktree roots) instead of
 worktrees, the current repository first so pickers start with it
 highlighted. --porcelain prints a stable header-less tab-separated
-format for scripts and fzf wrappers:
+format for scripts, with names verbatim:
 
   <org/repo>	<branch>	<path>
 
@@ -93,6 +94,10 @@ func runList(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// The table is for reading, so names that are not iwt's own are
+	// neutralized: a path may carry an ESC, which the terminal would obey,
+	// and a control character would throw the column widths off as well.
+	// --porcelain above stays verbatim — its reader is a program.
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	if showRepo {
 		fmt.Fprintln(w, "REPO\tBRANCH\tSTATE\tLAST COMMIT\tPATH")
@@ -108,9 +113,9 @@ func runList(cmd *cobra.Command, args []string) error {
 			branch += " (main)"
 		}
 		if showRepo {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", e.Repo, branch, infos[i].state, infos[i].rel, e.Path)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", picker.Sanitize(e.Repo), picker.Sanitize(branch), infos[i].state, infos[i].rel, picker.Sanitize(e.Path))
 		} else {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", branch, infos[i].state, infos[i].rel, e.Path)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", picker.Sanitize(branch), infos[i].state, infos[i].rel, picker.Sanitize(e.Path))
 		}
 	}
 	return w.Flush()
@@ -148,7 +153,7 @@ func runListRepos() error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(w, "REPO\tPATH")
 	for i, r := range roots {
-		fmt.Fprintf(w, "%s\t%s\n", labels[i], r)
+		fmt.Fprintf(w, "%s\t%s\n", picker.Sanitize(labels[i]), picker.Sanitize(r))
 	}
 	return w.Flush()
 }

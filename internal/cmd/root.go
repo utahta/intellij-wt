@@ -8,11 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 
-	"github.com/ktr0731/go-fuzzyfinder"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/utahta/intellij-wt/internal/git"
+	"github.com/utahta/intellij-wt/internal/picker"
 )
 
 var rootCmd = &cobra.Command{
@@ -25,24 +27,49 @@ var rootCmd = &cobra.Command{
 
 func Execute() error {
 	err := rootCmd.Execute()
-	// Cancelling a picker is not an error worth reporting; the nonzero
-	// exit still stops && chains in scripts.
-	if err != nil && !errors.Is(err, fuzzyfinder.ErrAbort) {
+	// Neither cancelling a picker nor being told to stop is an error
+	// worth reporting; the nonzero exit still stops && chains in scripts.
+	if err != nil && !errors.Is(err, picker.ErrAbort) && !errors.Is(err, picker.ErrTerminated) {
 		fmt.Fprintln(os.Stderr, paint("1;31", "iwt: "+err.Error()))
 	}
 	return err
 }
 
-// paint wraps s in an ANSI color (SGR code) when stderr is a terminal, so
-// notices stand out between fzf redraws. NO_COLOR disables it.
+// paint prepares a message for stderr, wrapped in an ANSI color (SGR
+// code) when stderr is a terminal so notices stand out between picker
+// redraws; NO_COLOR disables the color. Whatever the message is made of,
+// nothing in it may steer the terminal, so escapes are neutralized here
+// too — some messages carry text iwt never sees, like git's own output
+// inside a wrapped error. Results on stdout stay untouched: shell
+// wrappers cd into those.
 func paint(code, s string) string {
+	s = safeMessage(s)
 	if os.Getenv("NO_COLOR") != "" {
 		return s
 	}
-	if fi, err := os.Stderr.Stat(); err != nil || fi.Mode()&os.ModeCharDevice == 0 {
+	if !term.IsTerminal(int(os.Stderr.Fd())) {
 		return s
 	}
 	return "\033[" + code + "m" + s + "\033[0m"
+}
+
+// safeMessage neutralizes what a terminal would act on while leaving a
+// message's own shape intact: newlines and tabs lay out diagnostics —
+// cobra's command suggestions arrive as several lines — so they stay,
+// while an ESC or any other control character becomes U+FFFD. Values
+// quoted inside a message get the stricter treatment of picker.Sanitize
+// where they are put in: a path has no business adding a line of its own
+// to iwt's output.
+func safeMessage(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' {
+			return r
+		}
+		if unicode.IsControl(r) {
+			return '�'
+		}
+		return r
+	}, s)
 }
 
 // worktreePath places worktrees under a shared root (default
@@ -63,36 +90,42 @@ func worktreePath(root, branch string) (string, error) {
 	return filepath.Join(base, org, name, name+"--"+strings.ReplaceAll(branch, "/", "-")), nil
 }
 
-func selectEntry(entries []worktreeEntry, header string) (git.Worktree, error) {
-	idx, err := fuzzyfinder.Find(entries, func(i int) string {
-		return entryLabel(entries[i])
-	}, fuzzyfinder.WithHeader(header), previewPath(func(i int) string { return entries[i].Path }))
+func selectEntry(entries []worktreeEntry, verb string) (git.Worktree, error) {
+	items := make([]picker.Item, len(entries))
+	for i, e := range entries {
+		items[i] = picker.Item{Label: entryLabel(e), Detail: e.Path}
+	}
+	res, err := picker.Run(items, picker.Options{
+		Prompt: "worktree> ",
+		Keys:   []picker.KeyHint{{Key: "enter", Desc: verb, Tone: picker.TonePrimary}},
+	})
 	if err != nil {
 		return git.Worktree{}, err
 	}
-	return entries[idx].Worktree, nil
+	if res.Index < 0 {
+		return git.Worktree{}, picker.ErrAbort
+	}
+	return entries[res.Index].Worktree, nil
 }
 
-// previewPath shows the highlighted worktree's path in a preview window,
-// keeping it out of the label so fuzzy matching only sees org/repo/branch.
-func previewPath(path func(i int) string) fuzzyfinder.Option {
-	return fuzzyfinder.WithPreviewWindow(func(i, _, _ int) string {
-		if i < 0 {
-			return ""
-		}
-		return path(i)
+func selectWorktrees(wts []git.Worktree, verb string) ([]git.Worktree, error) {
+	items := make([]picker.Item, len(wts))
+	for i, w := range wts {
+		items[i] = picker.Item{Label: worktreeLabel(w), Detail: w.Path}
+	}
+	res, err := picker.Run(items, picker.Options{
+		Prompt: "prune> ",
+		Multi:  true,
+		Keys: []picker.KeyHint{
+			{Key: "enter", Desc: verb, Tone: picker.ToneDanger},
+			{Key: "tab", Desc: "toggle"},
+		},
 	})
-}
-
-func selectWorktrees(wts []git.Worktree, header string) ([]git.Worktree, error) {
-	idxs, err := fuzzyfinder.FindMulti(wts, func(i int) string {
-		return worktreeLabel(wts[i])
-	}, fuzzyfinder.WithHeader(header), previewPath(func(i int) string { return wts[i].Path }))
 	if err != nil {
 		return nil, err
 	}
-	selected := make([]git.Worktree, 0, len(idxs))
-	for _, i := range idxs {
+	selected := make([]git.Worktree, 0, len(res.Indices))
+	for _, i := range res.Indices {
 		selected = append(selected, wts[i])
 	}
 	return selected, nil
@@ -109,9 +142,56 @@ func worktreeLabel(w git.Worktree) string {
 	return label
 }
 
-func confirm(msg string) bool {
-	fmt.Fprintf(os.Stderr, "%s [y/N]: ", paint("1;33", msg))
-	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-	line = strings.TrimSpace(line)
-	return line == "y" || line == "Y"
+// confirmFn is the question asked by destructive flows, replaced in
+// tests.
+var confirmFn = confirm
+
+// confirm asks a yes/no question, answering No or failing — never both
+// at once. A No calls off one step, so its caller may carry on with the
+// rest; an error means no answer was given at all (the user cancelled,
+// the process was told to stop, the terminal is unusable), and callers
+// must abandon the work instead of reading it as a No and moving to the
+// next item.
+//
+// On a terminal the answer comes from the picker, so terminal input is
+// decoded by the library iwt already depends on rather than by a second
+// reader of its own: escape sequences, 8-bit controls, replies a
+// previous program's queries left behind and pastes are all its
+// business, and none of them can spell an answer. "no" starts
+// highlighted, so Enter keeps the default, while typing y or n narrows
+// to one option as before; an answer matching neither option is a No.
+//
+// Non-terminal stdin (a pipe, a file, /dev/null) reads a line instead,
+// for scripts and tests — EOF answers No, since automation that offers
+// no answer means to decline, not to stop. A char-device check would not
+// do here: /dev/null is one, and waiting for an answer would hang
+// automation that redirected stdin precisely to avoid prompts.
+func confirm(msg string) (bool, error) {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		fmt.Fprintf(os.Stderr, "%s [y/N]: ", paint("1;33", msg))
+		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+		return isYes(line), nil
+	}
+
+	fmt.Fprintln(os.Stderr, paint("1;33", msg))
+	items := []picker.Item{{Label: "no"}, {Label: "yes"}}
+	res, err := picker.Run(items, picker.Options{
+		Prompt: "confirm> ",
+		Tone:   picker.ToneDanger,
+		Keys:   []picker.KeyHint{{Key: "enter", Desc: "answer", Tone: picker.ToneDanger}},
+	})
+	if err != nil {
+		return false, err
+	}
+	if res.Index < 0 {
+		return false, nil // an answer that named neither option
+	}
+	return isYes(items[res.Index].Label), nil
+}
+
+// isYes reports whether an answer to a yes/no prompt is affirmative;
+// everything else, an empty line included, keeps the default No.
+func isYes(answer string) bool {
+	s := strings.TrimSpace(answer)
+	return strings.EqualFold(s, "y") || strings.EqualFold(s, "yes")
 }
