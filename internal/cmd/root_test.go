@@ -41,15 +41,43 @@ func TestConfirmNullStdin(t *testing.T) {
 	muteStderr(t)
 	swapStdin(t, null)
 
-	done := make(chan bool, 1)
-	go func() { done <- confirm("delete?") }()
+	type answer struct {
+		yes bool
+		err error
+	}
+	done := make(chan answer, 1)
+	go func() {
+		yes, err := confirm("delete?")
+		done <- answer{yes, err}
+	}()
 	select {
 	case got := <-done:
-		if got {
-			t.Error("confirm with /dev/null stdin = true, want false")
+		// An answer of No, not a failure: automation that offers no
+		// answer declines the step, it does not call off the run.
+		if got.yes || got.err != nil {
+			t.Errorf("confirm with /dev/null stdin = (%v, %v), want (false, nil)", got.yes, got.err)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("confirm blocked on /dev/null stdin (misread as a terminal)")
+	}
+}
+
+func TestIsYes(t *testing.T) {
+	for _, tt := range []struct {
+		answer string
+		want   bool
+	}{
+		{"y", true},
+		{"Y", true},
+		{"yes", true},
+		{" y \n", true},
+		{"n", false},
+		{"", false},
+		{"yep", false},
+	} {
+		if got := isYes(tt.answer); got != tt.want {
+			t.Errorf("isYes(%q) = %v, want %v", tt.answer, got, tt.want)
+		}
 	}
 }
 
@@ -61,6 +89,7 @@ func TestConfirmPipedStdin(t *testing.T) {
 	}{
 		{"y\n", true},
 		{"Y\n", true},
+		{"yes\n", true},
 		{"n\n", false},
 		{"", false}, // immediate EOF
 	} {
@@ -73,7 +102,11 @@ func TestConfirmPipedStdin(t *testing.T) {
 		}
 		w.Close()
 		swapStdin(t, r)
-		if got := confirm("delete?"); got != tt.want {
+		got, err := confirm("delete?")
+		if err != nil {
+			t.Errorf("confirm with piped %q returned %v", tt.line, err)
+		}
+		if got != tt.want {
 			t.Errorf("confirm with piped %q = %v, want %v", tt.line, got, tt.want)
 		}
 		r.Close()

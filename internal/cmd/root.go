@@ -26,9 +26,9 @@ var rootCmd = &cobra.Command{
 
 func Execute() error {
 	err := rootCmd.Execute()
-	// Cancelling a picker is not an error worth reporting; the nonzero
-	// exit still stops && chains in scripts.
-	if err != nil && !errors.Is(err, picker.ErrAbort) {
+	// Neither cancelling a picker nor being told to stop is an error
+	// worth reporting; the nonzero exit still stops && chains in scripts.
+	if err != nil && !errors.Is(err, picker.ErrAbort) && !errors.Is(err, picker.ErrTerminated) {
 		fmt.Fprintln(os.Stderr, paint("1;31", "iwt: "+err.Error()))
 	}
 	return err
@@ -116,35 +116,56 @@ func worktreeLabel(w git.Worktree) string {
 	return label
 }
 
-// confirm asks a yes/no question. On a terminal it reads a single key
-// from /dev/tty in raw mode and echoes it itself, so the answer is
-// visible regardless of the surrounding terminal state (e.g. inside a
-// zle widget, where echo is off). Non-terminal stdin (a pipe, a file,
-// /dev/null) reads a line instead, for scripts and tests — EOF answers
-// No. A char-device check would not do here: /dev/null is one, and
-// waiting on /dev/tty would hang automation that redirected stdin
-// precisely to avoid prompts.
-func confirm(msg string) bool {
-	fmt.Fprintf(os.Stderr, "%s [y/N]: ", paint("1;33", msg))
+// confirmFn is the question asked by destructive flows, replaced in
+// tests.
+var confirmFn = confirm
 
+// confirm asks a yes/no question, answering No or failing — never both
+// at once. A No calls off one step, so its caller may carry on with the
+// rest; an error means no answer was given at all (the user cancelled,
+// the process was told to stop, the terminal is unusable), and callers
+// must abandon the work instead of reading it as a No and moving to the
+// next item.
+//
+// On a terminal the answer comes from the picker, so terminal input is
+// decoded by the library iwt already depends on rather than by a second
+// reader of its own: escape sequences, 8-bit controls, replies a
+// previous program's queries left behind and pastes are all its
+// business, and none of them can spell an answer. "no" starts
+// highlighted, so Enter keeps the default, while typing y or n narrows
+// to one option as before; an answer matching neither option is a No.
+//
+// Non-terminal stdin (a pipe, a file, /dev/null) reads a line instead,
+// for scripts and tests — EOF answers No, since automation that offers
+// no answer means to decline, not to stop. A char-device check would not
+// do here: /dev/null is one, and waiting for an answer would hang
+// automation that redirected stdin precisely to avoid prompts.
+func confirm(msg string) (bool, error) {
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		fmt.Fprintf(os.Stderr, "%s [y/N]: ", paint("1;33", msg))
 		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-		line = strings.TrimSpace(line)
-		return line == "y" || line == "Y"
+		return isYes(line), nil
 	}
 
-	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	fmt.Fprintln(os.Stderr, paint("1;33", msg))
+	items := []picker.Item{{Label: "no"}, {Label: "yes"}}
+	res, err := picker.Run(items, picker.Options{
+		Prompt: "confirm> ",
+		Tone:   picker.ToneDanger,
+		Keys:   []picker.KeyHint{{Key: "enter", Desc: "answer", Tone: picker.ToneDanger}},
+	})
 	if err != nil {
-		return false
+		return false, err
 	}
-	defer tty.Close()
-	old, err := term.MakeRaw(int(tty.Fd()))
-	if err != nil {
-		return false
+	if res.Index < 0 {
+		return false, nil // an answer that named neither option
 	}
-	var buf [1]byte
-	_, _ = tty.Read(buf[:])
-	_ = term.Restore(int(tty.Fd()), old)
-	fmt.Fprintf(os.Stderr, "%c\n", buf[0])
-	return buf[0] == 'y' || buf[0] == 'Y'
+	return isYes(items[res.Index].Label), nil
+}
+
+// isYes reports whether an answer to a yes/no prompt is affirmative;
+// everything else, an empty line included, keeps the default No.
+func isYes(answer string) bool {
+	s := strings.TrimSpace(answer)
+	return strings.EqualFold(s, "y") || strings.EqualFold(s, "yes")
 }

@@ -16,8 +16,15 @@ import (
 	"github.com/sahilm/fuzzy"
 )
 
-// ErrAbort is returned when the user cancels the picker.
+// ErrAbort is returned when the user cancels the picker: one step of the
+// work was called off, so a caller may go back and offer it again.
 var ErrAbort = errors.New("abort")
+
+// ErrTerminated is returned when a run ends with no answer because the
+// process was told to stop — a signal, or the program being killed.
+// Unlike ErrAbort it must travel up rather than be handled: the work as a
+// whole is over, and anything still queued must not go ahead.
+var ErrTerminated = errors.New("terminated")
 
 // Item is one selectable row. Label is fuzzy-matched and shown; Detail is
 // shown dimmed and excluded from matching.
@@ -77,7 +84,8 @@ type Result struct {
 
 // Run shows the picker on the terminal (rendering on /dev/tty, so stdout
 // stays free for results) and returns the accepted state. Esc and Ctrl+C
-// return ErrAbort.
+// return ErrAbort; a run cut short by a signal returns ErrTerminated,
+// which callers must not mistake for an answer.
 func Run(items []Item, opts Options) (Result, error) {
 	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 	if err != nil {
@@ -111,14 +119,27 @@ func Run(items []Item, opts Options) (Result, error) {
 	p := tea.NewProgram(m, tea.WithInput(tty), tea.WithOutput(tty))
 	res, err := p.Run()
 	if err != nil {
+		if errors.Is(err, tea.ErrInterrupted) {
+			return Result{}, ErrTerminated // SIGINT, with no answer given
+		}
 		return Result{}, err
 	}
-	final := res.(model)
-	if final.aborted {
+	return result(res.(model), opts.Multi)
+}
+
+// result turns a finished model into what the run returns. A model that
+// neither accepted nor aborted was never answered: the program ended on
+// its own — SIGTERM quits it without an error — and passing its state off
+// as a choice would let a caller act on input nobody confirmed.
+func result(final model, multi bool) (Result, error) {
+	switch {
+	case final.aborted:
 		return Result{}, ErrAbort
+	case !final.done:
+		return Result{}, ErrTerminated
 	}
 	r := Result{Key: final.key, Query: final.query, Index: final.choice}
-	if opts.Multi {
+	if multi {
 		if len(final.marked) > 0 {
 			for i := range final.items {
 				if final.marked[i] {

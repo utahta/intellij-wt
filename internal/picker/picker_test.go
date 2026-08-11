@@ -1,6 +1,7 @@
 package picker
 
 import (
+	"errors"
 	"regexp"
 	"strings"
 	"testing"
@@ -148,6 +149,63 @@ func TestCtrlHDeletesLikeBackspace(t *testing.T) {
 		got = next.(model)
 		if got.done || got.aborted {
 			t.Errorf("%s on an empty query ended the picker", tea.Key(key))
+		}
+	}
+}
+
+func TestResultDistinguishesNoAnswerFromAnAnswer(t *testing.T) {
+	items := []Item{{Label: "no"}, {Label: "yes"}}
+
+	// Accepted with nothing matching the query: an answer all the same,
+	// which an input box reads as its query.
+	m := testModel(items, "maybe")
+	m.done = true
+	res, err := result(m, false)
+	if err != nil || res.Index != -1 || res.Query != "maybe" {
+		t.Errorf("accepted with no match = (%+v, %v), want index -1, query \"maybe\", no error", res, err)
+	}
+
+	// Esc or Ctrl+C: this step is off, callers may offer it again.
+	m = testModel(items, "")
+	m.aborted, m.done = true, true
+	if _, err := result(m, false); !errors.Is(err, ErrAbort) {
+		t.Errorf("aborted run = %v, want ErrAbort", err)
+	}
+
+	// Neither accepted nor aborted: the program ended by itself, as it
+	// does on SIGTERM, which bubbletea quits on without an error. The
+	// model's state is not an answer and must not read as one.
+	m = testModel(items, "y")
+	if _, err := result(m, false); !errors.Is(err, ErrTerminated) {
+		t.Errorf("run that ended without an answer = %v, want ErrTerminated", err)
+	}
+}
+
+func TestYesNoConfirmationRows(t *testing.T) {
+	// The confirmation prompt is a two-item picker: "no" first so Enter
+	// keeps the safe default, and either answer reachable by typing its
+	// first letter in any case.
+	items := []Item{{Label: "no"}, {Label: "yes"}}
+	for _, tt := range []struct {
+		query string
+		want  int // item index Enter would accept, -1 for none
+	}{
+		{"", 0},
+		{"y", 1},
+		{"Y", 1},
+		{"yes", 1},
+		{"n", 0},
+		{"N", 0},
+		{"no", 0},
+		{"maybe", -1},
+	} {
+		m := testModel(items, tt.query)
+		got := -1
+		if len(m.rows) > 0 {
+			got = m.rows[m.cursor].item
+		}
+		if got != tt.want {
+			t.Errorf("query %q selects item %d, want %d", tt.query, got, tt.want)
 		}
 	}
 }

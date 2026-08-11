@@ -122,11 +122,18 @@ stageOne:
 				return finish(items2[res2.Index].Detail)
 			case "ctrl+n":
 				branch, track, err := pickBranch(repo)
-				if errors.Is(err, picker.ErrAbort) || branch == "" {
-					continue
-				}
+				// An empty branch means the input box was left empty —
+				// but only once it is known that no error came back: on
+				// one the branch is empty too, and being told to stop
+				// would read as nothing having been typed.
 				if err != nil {
+					if errors.Is(err, picker.ErrAbort) {
+						continue
+					}
 					return err
+				}
+				if branch == "" {
+					continue
 				}
 				path, err := createWorktree(repo, branch, "", track)
 				if err != nil {
@@ -137,16 +144,35 @@ stageOne:
 			case "ctrl+d":
 				if res2.Index >= 0 {
 					if err := pruneTarget(items2[res2.Index].Detail); err != nil {
-						fmt.Fprintln(os.Stderr, paint("1;31", "iwt: "+err.Error()))
+						if err = report(err); err != nil {
+							return err
+						}
 					}
 				}
 			case "ctrl+x":
 				if err := pruneMergedWorktrees(repo); err != nil {
-					fmt.Fprintln(os.Stderr, paint("1;31", "iwt: "+err.Error()))
+					if err = report(err); err != nil {
+						return err
+					}
 				}
 			}
 		}
 	}
+}
+
+// report prints an error from an action taken inside the picker loop and
+// returns nil, so the loop offers the picker again. A cancelled step is
+// not worth a message; being told to stop is not the loop's to swallow,
+// so that error comes back to end the run.
+func report(err error) error {
+	switch {
+	case errors.Is(err, picker.ErrTerminated):
+		return err
+	case errors.Is(err, picker.ErrAbort):
+		return nil
+	}
+	fmt.Fprintln(os.Stderr, paint("1;31", "iwt: "+err.Error()))
+	return nil
 }
 
 // repoItems lists every discovered repository, the current one first so

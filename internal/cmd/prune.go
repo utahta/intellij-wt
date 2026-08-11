@@ -77,7 +77,9 @@ func runPrune(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	removeWorktrees(root, selected, false)
+	if err := removeWorktrees(root, selected, false); err != nil {
+		return err
+	}
 	return git.PruneWorktrees(root)
 }
 
@@ -102,7 +104,9 @@ func pruneMergedWorktrees(root string) error {
 		fmt.Fprintln(os.Stderr, paint("33", "no merged worktrees"))
 		return git.PruneWorktrees(root)
 	}
-	removeWorktrees(root, selected, true)
+	if err := removeWorktrees(root, selected, true); err != nil {
+		return err
+	}
 	return git.PruneWorktrees(root)
 }
 
@@ -120,7 +124,9 @@ func pruneTarget(target string) error {
 	if err != nil {
 		return err
 	}
-	removeWorktrees(root, []git.Worktree{wt}, false)
+	if err := removeWorktrees(root, []git.Worktree{wt}, false); err != nil {
+		return err
+	}
 	return git.PruneWorktrees(root)
 }
 
@@ -128,8 +134,11 @@ func pruneTarget(target string) error {
 // confirmation (or --force), and fully merged branches are deleted after
 // a confirmation. In merged mode (a bulk removal of merged worktrees)
 // nothing prompts: dirty worktrees are skipped and merged branches are
-// deleted. Failures are reported and skipped.
-func removeWorktrees(root string, wts []git.Worktree, merged bool) {
+// deleted. Removal failures are reported and skipped, but a question
+// left unanswered ends the run: declining one worktree moves on to the
+// next, while cancelling — or being told to stop — must not let the
+// removals queued behind it go ahead unasked.
+func removeWorktrees(root string, wts []git.Worktree, merged bool) error {
 	defaultBranch := git.DefaultBranch(root)
 	for _, w := range wts {
 		force := pruneForce
@@ -138,7 +147,11 @@ func removeWorktrees(root string, wts []git.Worktree, merged bool) {
 				fmt.Fprintln(os.Stderr, paint("33", "skipped (dirty): "+w.Path))
 				continue
 			}
-			if !confirm(fmt.Sprintf("%s has uncommitted changes. Remove anyway?", w.Path)) {
+			ok, err := confirmFn(fmt.Sprintf("%s has uncommitted changes. Remove anyway?", w.Path))
+			if err != nil {
+				return err
+			}
+			if !ok {
 				fmt.Fprintln(os.Stderr, paint("33", "skipped: "+w.Path))
 				continue
 			}
@@ -158,12 +171,23 @@ func removeWorktrees(root string, wts []git.Worktree, merged bool) {
 		// that cannot be determined (no origin default branch) — the
 		// deletion below uses git branch -d, so git still refuses a
 		// branch that turns out to be unmerged.
-		del := false
+		del, question := false, ""
 		switch {
 		case defaultBranch != "" && git.IsMerged(root, w.Branch, defaultBranch):
-			del = merged || confirm(fmt.Sprintf("branch %q is merged into %s. Delete it?", w.Branch, defaultBranch))
+			if merged {
+				del = true // being merged is why it was picked at all
+			} else {
+				question = fmt.Sprintf("branch %q is merged into %s. Delete it?", w.Branch, defaultBranch)
+			}
 		case defaultBranch == "" && !merged:
-			del = confirm(fmt.Sprintf("branch %q: cannot tell whether it is merged (origin's default branch is unset). Delete it anyway?", w.Branch))
+			question = fmt.Sprintf("branch %q: cannot tell whether it is merged (origin's default branch is unset). Delete it anyway?", w.Branch)
+		}
+		if question != "" {
+			ok, err := confirmFn(question)
+			if err != nil {
+				return err
+			}
+			del = ok
 		}
 		if del {
 			if err := git.DeleteBranch(root, w.Branch); err != nil {
@@ -173,4 +197,5 @@ func removeWorktrees(root string, wts []git.Worktree, merged bool) {
 			}
 		}
 	}
+	return nil
 }
