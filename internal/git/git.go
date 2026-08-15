@@ -36,8 +36,13 @@ func run(dir string, args ...string) (string, error) {
 	return strings.TrimSpace(out.String()), nil
 }
 
-// runLoud is for mutating commands whose progress output is useful to the
-// user. stdout goes to stderr so that iwt's own stdout stays script-friendly.
+// runLoud is for commands whose output the user is meant to see: git's own
+// messages, a remote's, and whatever a hook prints — hooks run on checkout
+// and on ref updates, and one may ask something and then read the answer,
+// so the terminal is handed over as it would be on the command line.
+// Holding a line back to inspect it, as an earlier version did, left such
+// prompts invisible and progress unshown. stdout goes to stderr so that
+// iwt's own stdout stays script-friendly.
 func runLoud(dir string, args ...string) error {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
@@ -360,7 +365,7 @@ func (m refspecMap) source(ref string) string {
 	return m.srcPrefix + x + m.srcSuffix
 }
 
-// branchCapable reports whether the map can ever yield a branch; maps
+// branchCapable reports whether the map can ever yield a branch// branchCapable reports whether the map can ever yield a branch; maps
 // that cannot (e.g. tags-only refspecs) stay out of the ref scan but
 // still participate in resolution as blockers.
 func (m refspecMap) branchCapable() bool {
@@ -562,6 +567,58 @@ func RemoteBranchRefs(dir, branch string) []RemoteBranch {
 		}
 	}
 	return rbs
+}
+
+// RemoteBranchRefFor resolves branch as a branch of one named remote,
+// which is what a caller who named that remote asked for: the preference
+// for origin that settles a bare name would otherwise hand back another
+// remote's commit. found reports a ref this repository tracks the branch
+// by; ambiguous reports that the refs it does have are shared with another
+// mapping, so whose commit they hold depends on fetch order — a different
+// answer from having none, and one no further fetch would change. A remote
+// with several destinations for one branch may have both kinds, so the
+// search runs to the end rather than stopping at the first.
+func RemoteBranchRefFor(dir, remote, branch string) (rb RemoteBranch, found, ambiguous bool) {
+	for _, cand := range remoteTrackingBranches(dir) {
+		if cand.Remote != remote || cand.Name != branch {
+			continue
+		}
+		if cand.Ambiguous {
+			ambiguous = true
+			continue
+		}
+		return cand, true, false
+	}
+	return RemoteBranch{}, false, ambiguous
+}
+
+// CheckBranchName reports whether branch is a name git would accept for a
+// branch, by asking git: a pattern ("release/*"), a bare HEAD and the rest
+// are refused once, up front, rather than half-handled by everything
+// downstream that has to name a ref after it.
+func CheckBranchName(dir, branch string) error {
+	// No "--": check-ref-format does not take one, and it refuses names
+	// that look like options ("--normalize") along with the rest.
+	if _, err := run(dir, "check-ref-format", "--branch", branch); err != nil {
+		return fmt.Errorf("%q is not a valid branch name", branch)
+	}
+	return nil
+}
+
+// Fetch runs the fetch a user would run, and nothing besides: every remote
+// as configured, on the terminal git would have had. What that does is the
+// repository's configuration doing what it says — where refs land, whether
+// tags follow, whether refs go away because fetch.prune says so, whether a
+// hook asks something and waits for the answer. iwt neither adds to that
+// nor argues with it, which is the whole of what a shortcut owes.
+func Fetch(dir string) error {
+	var first error
+	for _, r := range remoteNames(dir) {
+		if err := runLoud(dir, "fetch", "--", r); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
 }
 
 // AddWorktree checks out an existing branch into a new worktree at path.

@@ -153,6 +153,18 @@ func TestCtrlHDeletesLikeBackspace(t *testing.T) {
 	}
 }
 
+func TestInitialQueryFilters(t *testing.T) {
+	// A run offered again after reloading its items resumes with the
+	// query already typed, so the reload does not cost the filter.
+	items := []Item{{Label: "feature-x"}, {Label: "main"}}
+	m := testModel(items, "")
+	m.query = Sanitize("feat")
+	m.filter()
+	if len(m.rows) != 1 || m.rows[0].item != 0 {
+		t.Errorf("initial query did not filter: rows = %+v", m.rows)
+	}
+}
+
 func TestSanitizeNeutralizesUntrustedStrings(t *testing.T) {
 	for _, tt := range []struct {
 		name, in, want string

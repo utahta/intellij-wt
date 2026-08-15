@@ -55,6 +55,10 @@ type KeyHint struct {
 // Options configures a picker run.
 type Options struct {
 	Prompt string
+	// Query starts the picker with the filter already typed, so a run
+	// offered again — after reloading its items, say — resumes where the
+	// last one left off instead of making the user retype.
+	Query string
 	// Tone colors the prompt to match the screen's meaning (blue for
 	// selection, green for creation), in the same system as the chips.
 	Tone Tone
@@ -116,6 +120,7 @@ func Run(items []Item, opts Options) (Result, error) {
 		marked:      make(map[int]bool),
 		choice:      -1,
 	}
+	m.query = Sanitize(opts.Query)
 	m.filter()
 
 	p := tea.NewProgram(m, tea.WithInput(tty), tea.WithOutput(tty))

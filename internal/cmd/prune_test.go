@@ -5,11 +5,33 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/utahta/intellij-wt/internal/git"
 	"github.com/utahta/intellij-wt/internal/picker"
 )
+
+// gitTry runs git in dir and hands back its output and error, for the
+// cases where failing is the answer being checked.
+func gitTry(dir string, args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	return strings.TrimSpace(string(out)), err
+}
+
+// gitOut runs git in dir and returns its trimmed output.
+func gitOut(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git %v: %v", args, err)
+	}
+	return strings.TrimSpace(string(out))
+}
 
 func gitRun(t *testing.T, dir string, args ...string) {
 	t.Helper()

@@ -925,3 +925,210 @@ func TestAmbiguousBranchAndTagName(t *testing.T) {
 		t.Error("IsMerged(release, main) = false, want true")
 	}
 }
+
+func refValue(t *testing.T, dir, ref string) string {
+	t.Helper()
+	out, err := run(dir, "rev-parse", ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func TestCheckBranchName(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := run(dir, "init", "-q", "-b", "main", "repo"); err != nil {
+		t.Fatal(err)
+	}
+	repo := filepath.Join(dir, "repo")
+	for _, name := range []string{"topic", "feature/x"} {
+		if err := CheckBranchName(repo, name); err != nil {
+			t.Errorf("CheckBranchName(%q) = %v, want it accepted", name, err)
+		}
+	}
+	// A pattern would match refs on the remote that nothing asked about;
+	// the rest git refuses as branch names of its own accord.
+	for _, name := range []string{"release/*", "a b", "-x", "HEAD", "", "x..y"} {
+		if err := CheckBranchName(repo, name); err == nil {
+			t.Errorf("CheckBranchName(%q) = nil, want it refused", name)
+		}
+	}
+}
+
+func TestRunLoudLetsHooksPrompt(t *testing.T) {
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "repo")
+	mustGit := func(d string, args ...string) {
+		t.Helper()
+		if _, err := run(d, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustGit(dir, "init", "-q", "-b", "main", repo)
+	mustGit(repo, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "init")
+
+	// A hook that asks something and waits for the answer prints no
+	// newline. Held back until a line ended, the question would never
+	// reach the terminal and the hook would wait on an answer nobody knew
+	// to give, so commands that run hooks write to it directly.
+	hook := filepath.Join(repo, ".git", "hooks", "post-checkout")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nprintf 'Continue? '\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	out := filepath.Join(dir, "stderr.txt")
+	f, err := os.Create(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stderr
+	os.Stderr = f
+	err = AddWorktreeNewBranch(repo, filepath.Join(dir, "wt"), "topic", "main")
+	os.Stderr = old
+	f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	printed, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(printed), "Continue? ") {
+		t.Errorf("the hook's prompt did not reach the terminal: %q", printed)
+	}
+}
+
+func TestRemoteBranchRefForNamesItsRemote(t *testing.T) {
+	dir := t.TempDir()
+	origin := filepath.Join(dir, "origin")
+	repo := filepath.Join(dir, "repo")
+	mustGit := func(d string, args ...string) {
+		t.Helper()
+		if _, err := run(d, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustGit(dir, "init", "-q", "-b", "main", origin)
+	mustGit(origin, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "init")
+	mustGit(origin, "branch", "shared")
+	mustGit(dir, "clone", "-q", origin, repo)
+	mustGit(dir, "clone", "-q", "--bare", origin, filepath.Join(dir, "backup"))
+	mustGit(repo, "remote", "add", "backup", filepath.Join(dir, "backup"))
+	mustGit(repo, "fetch", "-q", "backup")
+
+	// Both remotes have it, and a bare name resolves to origin's by
+	// preference. Naming a remote has to override that, or --remote backup
+	// would hand back origin's commit.
+	if rb, found, ambiguous := RemoteBranchRefFor(repo, "backup", "shared"); !found || ambiguous || rb.Ref != "refs/remotes/backup/shared" {
+		t.Errorf("RemoteBranchRefFor(backup, shared) = %+v, %v, %v, want backup's ref", rb, found, ambiguous)
+	}
+	if rb := RemoteBranchRefs(repo, "shared"); len(rb) != 1 || rb[0].Remote != "origin" {
+		t.Errorf("RemoteBranchRefs(shared) = %+v, want origin's by preference", rb)
+	}
+	if _, found, ambiguous := RemoteBranchRefFor(repo, "backup", "nope"); found || ambiguous {
+		t.Errorf("RemoteBranchRefFor(backup, nope) = %v, %v, want neither", found, ambiguous)
+	}
+}
+
+func branchList(t *testing.T, dir string) string {
+	t.Helper()
+	out, err := run(dir, "branch", "--format=%(refname:lstrip=2)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func TestFetchFollowsTheRepositorysConfiguration(t *testing.T) {
+	dir := t.TempDir()
+	origin := filepath.Join(dir, "origin")
+	repo := filepath.Join(dir, "repo")
+	mustGit := func(d string, args ...string) {
+		t.Helper()
+		if _, err := run(d, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustGit(dir, "init", "-q", "-b", "main", origin)
+	mustGit(origin, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "init")
+	mustGit(origin, "branch", "theirs")
+	mustGit(dir, "clone", "-q", origin, repo)
+	mustGit(origin, "branch", "-D", "theirs")
+
+	// Nothing is asked for beyond the fetch itself, so a repository that
+	// has not been told to prune keeps the tracking ref of a branch the
+	// remote no longer has.
+	if err := Fetch(repo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(repo, "rev-parse", "--verify", "refs/remotes/origin/theirs"); err != nil {
+		t.Errorf("a tracking ref went away without being asked to: %v", err)
+	}
+
+	// And a repository that has been told to prune does prune: the
+	// configuration decides, the same way it would from the command line.
+	mustGit(repo, "config", "fetch.prune", "true")
+	if err := Fetch(repo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(repo, "rev-parse", "--verify", "refs/remotes/origin/theirs"); err == nil {
+		t.Error("fetch.prune was set and the stale tracking ref stayed")
+	}
+
+	// The branch on the remote arrives either way.
+	mustGit(origin, "branch", "fresh")
+	if err := Fetch(repo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(repo, "rev-parse", "--verify", "refs/remotes/origin/fresh"); err != nil {
+		t.Errorf("the fetch did not bring the remote's branch: %v", err)
+	}
+}
+
+func TestRemoteBranchRefForTellsAmbiguousFromAbsent(t *testing.T) {
+	dir := t.TempDir()
+	origin := filepath.Join(dir, "origin")
+	backup := filepath.Join(dir, "backup")
+	repo := filepath.Join(dir, "repo")
+	mustGit := func(d string, args ...string) {
+		t.Helper()
+		if _, err := run(d, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustGit(dir, "init", "-q", "-b", "main", origin)
+	mustGit(origin, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "init")
+	mustGit(origin, "branch", "foo")
+	mustGit(dir, "clone", "-q", origin, repo)
+	mustGit(dir, "clone", "-q", "--bare", origin, backup)
+	mustGit(repo, "remote", "add", "backup", backup)
+
+	// origin keeps a destination of its own and mirrors into one it shares
+	// with backup. The shared ref is ambiguous — whose commit it holds
+	// depends on fetch order — while the private one is the ref git
+	// resolves the branch through, and it sorts after the shared one, so
+	// stopping at the first match would miss it.
+	mustGit(repo, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/z-own/*")
+	mustGit(repo, "config", "--add", "remote.origin.fetch", "+refs/heads/*:refs/remotes/a-shared/*")
+	mustGit(repo, "config", "remote.backup.fetch", "+refs/heads/*:refs/remotes/a-shared/*")
+	mustGit(repo, "fetch", "-q", "--all")
+
+	rb, found, ambiguous := RemoteBranchRefFor(repo, "origin", "foo")
+	if !found || ambiguous || rb.Ref != "refs/remotes/z-own/foo" {
+		t.Errorf("RemoteBranchRefFor(origin, foo) = %+v, %v, %v, want origin's own ref", rb, found, ambiguous)
+	}
+
+	// backup has nothing but the shared ref: refs exist, and none of them
+	// says what it holds. That is not the same as having none, and no
+	// further fetch would change it.
+	_, found, ambiguous = RemoteBranchRefFor(repo, "backup", "foo")
+	if found || !ambiguous {
+		t.Errorf("RemoteBranchRefFor(backup, foo) = %v, %v, want ambiguous", found, ambiguous)
+	}
+
+	// A name no ref carries at all: absent, plainly.
+	_, found, ambiguous = RemoteBranchRefFor(repo, "origin", "never-pushed")
+	if found || ambiguous {
+		t.Errorf("RemoteBranchRefFor(origin, never-pushed) = %v, %v, want neither", found, ambiguous)
+	}
+}

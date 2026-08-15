@@ -24,8 +24,9 @@ var pickCmd = &cobra.Command{
 into the highlighted repository's worktrees, Esc backs out one level.
 
 With --open, Enter opens the selection in IDEA, Ctrl+N creates a
-worktree for a picked or typed branch, Ctrl+D removes the highlighted
-worktree, and Ctrl+X prunes merged ones. With --cd, Enter prints the
+worktree for a picked or typed branch (Ctrl+R there fetches the remotes
+first), Ctrl+D removes the highlighted worktree, and Ctrl+X prunes merged
+ones. With --cd, Enter prints the
 selection's path for cd wrappers; the shell widgets from "iwt init zsh"
 are thin bindings over these two modes.`,
 	Args: cobra.NoArgs,
@@ -207,36 +208,55 @@ func repoItems() ([]picker.Item, error) {
 // two apart; a name on several remotes appears once per remote, and the
 // selection index recovers which remote branch to track (track is nil
 // for local branches and typed names).
+//
+// The list is built from tracking refs, which are as new as the last
+// fetch and no newer, so Ctrl+R runs the fetch a user would run and
+// offers the box again with the query still typed — a branch pushed
+// moments ago is one keystroke away, without every run paying for the
+// network.
 func pickBranch(repo string) (branch string, track *git.RemoteBranch, err error) {
-	branches := git.CandidateBranches(repo)
-	items := make([]picker.Item, len(branches))
-	for i, b := range branches {
-		detail := "local"
-		if b.Ref != "" {
-			// The remote name matters on its own: two remotes may fetch
-			// the same branch into the same destination, and the choice
-			// decides which one the new worktree tracks.
-			detail = fmt.Sprintf("%s (%s)", git.ShortRef(b.Ref), b.Remote)
+	query := ""
+	for {
+		branches := git.CandidateBranches(repo)
+		items := make([]picker.Item, len(branches))
+		for i, b := range branches {
+			detail := "local"
+			if b.Ref != "" {
+				// The remote name matters on its own: two remotes may
+				// fetch the same branch into the same destination, and
+				// the choice decides which one the new worktree tracks.
+				detail = fmt.Sprintf("%s (%s)", git.ShortRef(b.Ref), b.Remote)
+			}
+			items[i] = picker.Item{Label: b.Name, Detail: detail}
 		}
-		items[i] = picker.Item{Label: b.Name, Detail: detail}
-	}
-	res, err := picker.Run(items, picker.Options{
-		Prompt: "new branch> ",
-		Tone:   picker.ToneCreate,
-		Keys: []picker.KeyHint{
-			{Key: "enter", Desc: "create worktree (type a new name or pick)", Tone: picker.ToneCreate},
-			{Key: "esc", Desc: "back"},
-		},
-	})
-	if err != nil {
-		return "", nil, err
-	}
-	if res.Index >= 0 {
-		b := branches[res.Index]
-		if b.Ref != "" {
-			return b.Name, &b, nil
+		res, err := picker.Run(items, picker.Options{
+			Prompt: "new branch> ",
+			Query:  query,
+			Tone:   picker.ToneCreate,
+			Keys: []picker.KeyHint{
+				{Key: "enter", Desc: "create worktree (type a new name or pick)", Tone: picker.ToneCreate},
+				{Key: "ctrl-r", Desc: "fetch remotes"},
+				{Key: "esc", Desc: "back"},
+			},
+			Expect: []string{"ctrl+r"},
+		})
+		if err != nil {
+			return "", nil, err
 		}
-		return b.Name, nil, nil
+		if res.Key == "ctrl+r" {
+			query = res.Query
+			if err := git.Fetch(repo); err != nil {
+				fmt.Fprintln(os.Stderr, paint("1;31", "iwt: "+err.Error()))
+			}
+			continue
+		}
+		if res.Index >= 0 {
+			b := branches[res.Index]
+			if b.Ref != "" {
+				return b.Name, &b, nil
+			}
+			return b.Name, nil, nil
+		}
+		return res.Query, nil, nil
 	}
-	return res.Query, nil, nil
 }

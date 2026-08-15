@@ -14,7 +14,10 @@ import (
 	"github.com/utahta/intellij-wt/internal/picker"
 )
 
-var addNoOpen bool
+var (
+	addNoOpen bool
+	addRemote string
+)
 
 var addCmd = &cobra.Command{
 	Use:   "add <branch> [base]",
@@ -25,11 +28,15 @@ Worktrees live under a shared root (default ~/.intellij-wt/worktrees,
 overridable with IWT_ROOT), organized as <org>/<repo>/<repo>--<branch>.
 The org comes from the origin remote URL ("_local" when there is none).
 
-An existing branch is checked out as is; a branch that only exists on
-origin is checked out tracking it. Otherwise a new branch is created off
-[base] (default: origin's default branch, falling back to HEAD). Any
-.envrc found directly under the worktree or one level below is
-direnv-allowed.
+An existing branch is checked out as is, as is one that a remote-tracking
+ref already follows. Otherwise a new branch is created off [base]
+(default: origin's default branch, falling back to HEAD) — decided from
+refs this repository already has, so nothing here waits on a network.
+
+--remote <name> looks the branch up among that remote's tracking refs
+instead of preferring origin, and checks it out tracking it; it fetches
+nothing, so run git fetch first for a branch pushed since. Any .envrc
+found directly under the worktree or one level below is direnv-allowed.
 
 The created worktree path is printed to stdout.`,
 	Args: cobra.RangeArgs(1, 2),
@@ -38,6 +45,7 @@ The created worktree path is printed to stdout.`,
 
 func init() {
 	addCmd.Flags().BoolVarP(&addNoOpen, "no-open", "n", false, "do not open IDEA")
+	addCmd.Flags().StringVar(&addRemote, "remote", "", "track this remote's branch of that name (from refs already fetched)")
 	rootCmd.AddCommand(addCmd)
 }
 
@@ -52,7 +60,18 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	if len(args) == 2 {
 		base = args[1]
 	}
-	path, err := createWorktree(root, branch, base, nil)
+	var track *git.RemoteBranch
+	if addRemote != "" {
+		if base != "" {
+			return fmt.Errorf("--remote cannot be combined with a base")
+		}
+		rb, err := remoteBranchNamed(root, addRemote, branch)
+		if err != nil {
+			return err
+		}
+		track = &rb
+	}
+	path, err := createWorktree(root, branch, base, track)
 	if err != nil {
 		return err
 	}
@@ -70,11 +89,17 @@ func runAdd(cmd *cobra.Command, args []string) error {
 // and returns its path. An existing branch is checked out as is. At most
 // one of base and track may be set: track is a picked remote branch to
 // check out tracking it, while base starts a new branch off it under
-// git's own upstream rules (autosetupmerge). With neither, a branch
-// existing on a remote is checked out tracking it (origin preferred),
-// and otherwise a new branch is created off origin's default branch,
-// falling back to HEAD.
+// git's own upstream rules (autosetupmerge). With neither, a branch that a
+// remote-tracking ref already follows is checked out tracking it (origin
+// preferred), and otherwise a new branch is created off origin's default
+// branch, falling back to HEAD. No remote is asked along the way.
 func createWorktree(root, branch, base string, track *git.RemoteBranch) (string, error) {
+	// git's own rules, applied once and early: a name it would refuse as a
+	// branch has no business reaching a remote either, where a pattern
+	// ("release/*") would match refs this was never asked about.
+	if err := git.CheckBranchName(root, branch); err != nil {
+		return "", err
+	}
 	path, err := worktreePath(root, branch)
 	if err != nil {
 		return "", err
@@ -87,6 +112,9 @@ func createWorktree(root, branch, base string, track *git.RemoteBranch) (string,
 	case base != "":
 		err = git.AddWorktreeNewBranch(root, path, branch, base)
 	default:
+		// Whatever refs this repository already has decide it: a name is
+		// not looked for on a remote unless the caller says to, so this
+		// stays quick, works offline, and answers the same way twice.
 		rbs := git.RemoteBranchRefs(root, branch)
 		ambiguous := false
 		for _, rb := range rbs {
@@ -96,7 +124,7 @@ func createWorktree(root, branch, base string, track *git.RemoteBranch) (string,
 		// "Exists but ambiguous" is not "does not exist": silently
 		// creating a fresh branch would shadow the remote one.
 		case ambiguous:
-			return "", fmt.Errorf("branch %q exists on a remote, but several remotes fetch into its tracking ref; pass a base to disambiguate", branch)
+			return "", fmt.Errorf("branch %q has a tracking ref that several remotes fetch into, so which commit it holds depends on fetch order; pass a base to disambiguate", branch)
 		// More than one entry means distinct non-origin remotes have
 		// the branch (origin would have been preferred): guessing would
 		// silently check out the wrong commit.
@@ -113,6 +141,11 @@ func createWorktree(root, branch, base string, track *git.RemoteBranch) (string,
 			if def == "" {
 				def = "HEAD"
 			}
+			// Said out loud, because the tracking refs are only as new as
+			// the last fetch: a remote may have this branch already, and
+			// what is about to be created would then be a second history
+			// under its name.
+			fmt.Fprintln(os.Stderr, paint("2", fmt.Sprintf("no branch or tracking ref named %s here; branching off %s (--remote <name> picks up a remote's branch)", branch, def)))
 			err = git.AddWorktreeNewBranch(root, path, branch, def)
 		}
 	}
@@ -122,6 +155,33 @@ func createWorktree(root, branch, base string, track *git.RemoteBranch) (string,
 	allowDirenv(path)
 	fmt.Fprintln(os.Stderr, paint("1;32", "created: "+picker.Sanitize(path)))
 	return path, nil
+}
+
+// remoteBranchNamed resolves branch as a branch of the named remote, from
+// the refs this repository already has. It fetches nothing: keeping the
+// remotes up to date is git's job and the user's, and a caller who wants
+// this minute's branches runs git fetch first — which the error says when
+// the remote has no such branch here. Naming the remote is what makes this
+// worth having over a bare name: the preference for origin that settles a
+// bare name would otherwise hand back another remote's commit.
+func remoteBranchNamed(root, remote, branch string) (git.RemoteBranch, error) {
+	if err := git.CheckBranchName(root, branch); err != nil {
+		return git.RemoteBranch{}, err
+	}
+	if git.BranchExists(root, branch) {
+		return git.RemoteBranch{}, fmt.Errorf("branch %q already exists here; drop --remote to check it out as it is", branch)
+	}
+	rb, found, ambiguous := git.RemoteBranchRefFor(root, remote, branch)
+	switch {
+	case found:
+		return rb, nil
+	case ambiguous:
+		// The ref is here; what is unclear is whose commit it holds,
+		// which fetching again would not settle.
+		return git.RemoteBranch{}, fmt.Errorf("%s/%s tracks a ref that another mapping writes too, so which commit it holds depends on fetch order; pass a base, or give the remote a destination of its own", remote, branch)
+	default:
+		return git.RemoteBranch{}, fmt.Errorf("%s/%s is not available locally; run `git fetch %s` first", remote, branch, remote)
+	}
 }
 
 // allowDirenv pre-approves .envrc files in the new worktree (root and one

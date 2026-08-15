@@ -44,6 +44,8 @@ export IWT_IDEA_APP="$HOME/Applications/IntelliJ IDEA Ultimate.app"
 
 ```
 iwt add <branch> [base]  Create a worktree and open it in IDEA.
+                         --remote <name> tracks that remote's branch of the same
+                         name, from the refs already fetched.
                          Existing branches are checked out as is; new branches are
                          created off [base] (default: origin's default branch).
                          .envrc files in the worktree are direnv-allowed automatically.
@@ -65,6 +67,33 @@ iwt pick --open|--cd     Staged repository/worktree picker (backs the widgets).
 iwt init zsh             Print zsh integration (Ctrl+O / Ctrl+G pickers,
                          optional tmux glue — see Shell integration below).
 ```
+
+iwt works from the git state visible locally and leaves keeping up with
+remotes to git and to you. Nothing it does reaches a network on its own.
+
+`iwt add <branch>` decides from the refs the repository already has, so it
+is quick, works offline, and answers the same way twice: an existing branch
+is checked out, a branch a remote-tracking ref follows is checked out
+tracking it, and a name with neither becomes a new branch off origin's
+default branch — with a line on stderr saying so, since a remote may have
+that name already and the tracking refs are only as new as your last fetch.
+
+`iwt add <branch> --remote <name>` looks the branch up among that remote's
+tracking refs — useful when several remotes carry the name and origin's is
+not the one you want — and says what to run when it is not there yet:
+
+```
+origin/foo is not available locally; run `git fetch origin` first
+```
+
+`iwt add <branch> <base>` creates the branch off `<base>`.
+
+In the new-worktree box, Ctrl+R runs the fetch you would run yourself —
+`git fetch` against every remote, on the terminal, with nothing added. What
+that does is up to your configuration: refspecs decide where refs land, and
+`fetch.prune`, `remote.<name>.prune` or `fetch.pruneTags` make it delete
+refs that are gone from the remote, tags included, exactly as they would
+from the command line.
 
 Worktrees are placed under a shared root, organized by the origin remote's
 owner: `~/.intellij-wt/worktrees/<org>/<repo>/<repo>--<branch>` (slashes in
